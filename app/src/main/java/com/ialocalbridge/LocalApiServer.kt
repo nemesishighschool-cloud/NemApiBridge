@@ -513,7 +513,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             )
         } else {
             Log.w(TAG, "Upload failed across configured hosts")
-            jsonError(Response.Status.BAD_GATEWAY, "upload_failed", "Le fichier n’a pas pu être transféré.")
+            jsonError(Response.Status.INTERNAL_ERROR, "upload_failed", "Le fichier n’a pas pu être transféré.")
         }
     }
 
