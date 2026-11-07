@@ -5,17 +5,11 @@ readonly SDK_ROOT="${ANDROID_SDK_ROOT:-/opt/android-sdk}"
 readonly AVD_HOME="${ANDROID_AVD_HOME:-/opt/android-avd}"
 readonly SYSTEM_IMAGE="system-images;android-35;google_apis_playstore;x86_64"
 readonly AVD_NAME="api-bridge-deepseek"
-readonly VNC_PASSWORD_FILE="/run/secrets/vnc-pass"
-
-if [[ ! -s "$VNC_PASSWORD_FILE" ]]; then
-    echo "Missing VNC password file; mount a protected password file at $VNC_PASSWORD_FILE." >&2
-    exit 1
-fi
 
 Xvfb "$DISPLAY" -screen 0 1440x1600x24 -nolisten tcp &
 sleep 2
-x11vnc -display "$DISPLAY" -rfbport 5900 -forever -shared -noxdamage \
-    -passwdfile "$VNC_PASSWORD_FILE" &
+x11vnc -display "$DISPLAY" -rfbport 5900 -localhost -forever -shared \
+    -noxdamage -nopw &
 websockify --web=/usr/share/novnc 6080 localhost:5900 &
 
 mkdir -p "$SDK_ROOT/cmdline-tools" "$AVD_HOME"
@@ -65,5 +59,5 @@ until [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "
     sleep 2
 done
 
-echo "Android emulator is ready; noVNC requires the configured VNC password."
+echo "Android emulator is ready; noVNC is available through the private Codespaces port."
 wait "$emulator_pid"

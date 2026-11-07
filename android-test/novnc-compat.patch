@@ -1,0 +1,17 @@
+--- app/ui.js
++++ app/ui.js
+@@ -740,2 +740,6 @@
+         var ctrl = document.getElementById('noVNC_setting_' + name);
++        if (!ctrl) {
++            console.warn("noVNC setting control is missing: " + name);
++            return;
++        }
+         if (ctrl.type === 'checkbox') {
+@@ -780 +784 @@
+-        if (typeof val !== 'undefined' && val !== null && ctrl.type === 'checkbox') {
++        if (ctrl && typeof val !== 'undefined' && val !== null && ctrl.type === 'checkbox') {
+--- vnc.html
++++ vnc.html
+@@ -83 +83 @@
+-    <script type="module" crossorigin="anonymous" src="app/ui.js"></script>
++    <script type="module" crossorigin="anonymous" src="app/ui.js?apiBridgeNoVncCompat=1"></script>

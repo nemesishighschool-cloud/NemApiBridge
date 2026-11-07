@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst6 \
     openjdk-17-jre-headless \
     novnc \
+    patch \
     unzip \
     websockify \
     x11vnc \
@@ -33,7 +34,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /usr/local/bin/android-emulator-entrypoint
+COPY novnc-compat.patch /tmp/novnc-compat.patch
 RUN chmod 0755 /usr/local/bin/android-emulator-entrypoint
+RUN patch -d /usr/share/novnc -p0 < /tmp/novnc-compat.patch \
+    && rm /tmp/novnc-compat.patch
 
 EXPOSE 6080
 ENTRYPOINT ["/usr/local/bin/android-emulator-entrypoint"]
