@@ -271,10 +271,10 @@ Les providers importés et la clé sont stockés dans les préférences privées
 | P1 | Importer et valider des providers JSON | Implémenté; validation unitaire du contrat |
 | P2 | Envoyer, attendre et lire via les nœuds UI | Implémenté; validation avec une application cible réelle encore requise |
 | P3 | File bornée et états d’erreur | Implémenté; au plus une requête active et une en attente |
-| P4 | Serveur OpenAI local authentifié | Implémenté; build et contrat à vérifier via CI |
+| P4 | Serveur OpenAI local authentifié | Implémenté; compilation et tests unitaires réussis dans GitHub Actions |
 | P5 | Streaming SSE simulé | Implémenté; test sur client OpenAI à réaliser |
 | P6 | Historique texte et tool calls | Implémenté; limites multimodales documentées |
 | P7 | Interface Android et tableau de bord | Implémenté; test ergonomique sur téléphone à réaliser |
 | P8 | Uploads et providers supplémentaires | Upload existant conservé; adaptations propres à chaque app restent à configurer |
 
-La compilation locale de cette session est bloquée avant la résolution du projet : le JDK présent est 25, incompatible avec le Gradle 8.0 du dépôt. Le workflow GitHub Actions est la validation de compilation prévue. Aucun émulateur ou conteneur Android n’a été créé. L’automatisation réelle ne peut être déclarée validée qu’après essai sur un téléphone et une application disposant des sélecteurs correspondants.
+La compilation locale de cette session est bloquée avant la résolution du projet : le JDK présent est 25, incompatible avec le Gradle 8.0 du dépôt. Le workflow GitHub Actions a réussi `testDebugUnitTest` et `assembleDebug` pour le commit `d215246` ([run 42380116782](https://github.com/teteekoue/api_bridge/actions/runs/42380116782)). Aucun émulateur ou conteneur Android n’a été créé. L’automatisation réelle ne peut être déclarée validée qu’après essai sur un téléphone et une application disposant des sélecteurs correspondants.

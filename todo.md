@@ -11,7 +11,7 @@
 - [x] Workflow GitHub Actions consolidé pour tests et APK
 
 ## À valider
-- [ ] Compilation et tests unitaires dans GitHub Actions
+- [x] Compilation et tests unitaires dans GitHub Actions (run 42380116782, commit `d215246`)
 - [ ] Installation et contrôle des permissions sur un téléphone Android
 - [ ] Relevé des sélecteurs de l’application IA cible et essai de bout en bout
 - [ ] Vérification d’un client OpenAI en streaming et sans streaming
