@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">NEMAPI Bridge</string>
-    <string name="accessibility_description">Permet à l\'NEMAPI Bridge de simuler des clics pour interagir avec les applications d\'IA.</string>
+    <string name="app_name">API Bridge</string>
+    <string name="accessibility_description">Lit l’arbre d’accessibilité de l’application cible et actionne ses contrôles accessibles à la demande de l’utilisateur.</string>
 </resources>

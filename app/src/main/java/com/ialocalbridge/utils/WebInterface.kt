@@ -1,14 +1,13 @@
 package com.ialocalbridge.utils
 
 object WebInterface {
-    fun getHtml(ipAddress: String, port: Int, streamEnabled: Boolean, totalRequests: Long, totalPromptTokens: Long, totalCompletionTokens: Long): String {
-        val initStream = if (streamEnabled) "true" else "false"
+    fun getHtml(): String {
         return """<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NEMAPI Bridge - Admin Panel</title>
+    <title>API Bridge - Admin Panel</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>N</text></svg>">
     <style>
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -96,7 +95,7 @@ object WebInterface {
 <aside class="sidebar">
     <div class="sidebar-header">
         <div class="logo">N</div>
-        <span class="title">NEMAPI Bridge</span>
+        <span class="title">API Bridge</span>
     </div>
     <nav class="nav">
         <button class="nav-item active" data-page="dashboard">
@@ -118,7 +117,7 @@ object WebInterface {
     </nav>
     <div class="sidebar-footer">
         <div class="flex-row mb-2"><span class="status-dot" id="statusDot"></span><span id="statusLabel">Checking...</span></div>
-        <div class="text-muted">${ipAddress}:${port}</div>
+        <div class="text-muted" id="serverAddress">--</div>
     </div>
 </aside>
 <div class="main">
@@ -148,14 +147,23 @@ object WebInterface {
                 <div class="card-header"><span class="card-title">Streaming</span></div>
                 <div class="flex-row" style="justify-content:space-between;">
                     <div><strong>Simulate SSE Stream</strong><br><span class="text-muted">Activez pour compatibilite avec Qwen Code, Cursor, etc.</span></div>
-                    <label class="toggle"><input type="checkbox" id="streamToggle" $initStream checked onchange="toggleStream()"><span class="toggle-slider"></span></label>
+                    <label class="toggle"><input type="checkbox" id="streamToggle" onchange="toggleStream()"><span class="toggle-slider"></span></label>
                 </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><span class="card-title">Authentification</span></div>
+                <div class="mb-2"><span class="text-muted">Colle la clé API créée dans l’application Android. Elle reste dans cette session du navigateur.</span></div>
+                <div class="input-group">
+                    <input class="input" id="apiKey" type="password" placeholder="sk-bridge-..." autocomplete="off">
+                    <button class="btn btn-primary" onclick="saveApiKey()">Connexion</button>
+                </div>
+                <div class="text-muted mt-2" id="authStatus">Clé API requise pour le tableau de bord.</div>
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Server Configuration</span></div>
                 <div class="grid-2">
-                    <div><span class="card-title mb-2">Host</span><div class="code-block">${ipAddress}</div></div>
-                    <div><span class="card-title mb-2">Port</span><div class="code-block">${port}</div></div>
+                    <div><span class="card-title mb-2">Host</span><div class="code-block" id="serverHost">--</div></div>
+                    <div><span class="card-title mb-2">Port</span><div class="code-block" id="serverPort">--</div></div>
                 </div>
                 <div class="separator"></div>
                 <span class="card-title mb-2">API Endpoints</span>
@@ -167,23 +175,47 @@ POST /config</div>
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title">Connection String</span></div>
-                <div class="code-block" id="connString">curl http://${ipAddress}:${port}/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"Hello"}]}'</div>
+                <div class="code-block" id="connString">Authentifiez-vous pour afficher la configuration.</div>
             </div>
         </div>
         <div id="page-logs" class="page">
             <div class="card">
                 <div class="card-header"><span class="card-title">System Logs</span><div class="flex-row"><button class="btn btn-sm" onclick="clearLogs()">Clear</button><button class="btn btn-sm" onclick="exportLogs()">Export</button></div></div>
-                <div class="log-viewer" id="logsContainer"><div class="log-entry"><span class="log-time">--:--:--</span><span class="log-info">NEMAPI Bridge admin panel ready.</span></div></div>
+                <div class="log-viewer" id="logsContainer"><div class="log-entry"><span class="log-time">--:--:--</span><span class="log-info">API Bridge admin panel ready.</span></div></div>
             </div>
         </div>
     </div>
 </div>
 <script>
 const BASE=window.location.origin;
-let streamEnabled=$initStream;
+let streamEnabled=false;
 const logs=[];
 
 function E(id){return document.getElementById(id)}
+function esc(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function updateConnectionInfo(){
+    const host=window.location.hostname;
+    const port=window.location.port||(window.location.protocol==='https:'?'443':'80');
+    E('serverAddress').textContent=host+':'+port;
+    E('serverHost').textContent=host;
+    E('serverPort').textContent=port;
+    E('connString').textContent='curl http://'+host+':'+port+'/v1/chat/completions -H "Authorization: Bearer <CLE_API>" -H "Content-Type: application/json" -d \'{\"model\":\"nom-du-provider\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}\'';
+}
+function apiFetch(path,options={}){
+    const key=sessionStorage.getItem('api_bridge_key')||'';
+    const headers={...(options.headers||{}),...(key?{Authorization:'Bearer '+key}:{})};
+    return fetch(BASE+path,{...options,headers});
+}
+function saveApiKey(){
+    const key=E('apiKey').value.trim();
+    if(!key){sessionStorage.removeItem('api_bridge_key');E('authStatus').textContent='Clé API requise.';return}
+    sessionStorage.setItem('api_bridge_key',key);
+    E('authStatus').textContent='Vérification de la clé…';
+    checkStatus();
+    fetchStats();
+}
+const savedKey=sessionStorage.getItem('api_bridge_key');
+if(savedKey){E('apiKey').value=savedKey;E('authStatus').textContent='Clé enregistrée pour cette session.'}
 
 document.querySelectorAll('.nav-item').forEach(btn=>{
     btn.addEventListener('click',()=>{
@@ -215,7 +247,8 @@ function exportLogs(){
 
 async function fetchStats(){
     try{
-        const r=await fetch(BASE+'/stats');
+        const r=await apiFetch('/stats');
+        if(r.status===401){E('authStatus').textContent='Clé API absente ou invalide.';return}
         const d=await r.json();
         E('reqCount').textContent=d.total_requests;
         E('promptTokens').textContent=d.total_prompt_tokens.toLocaleString();
@@ -227,31 +260,35 @@ async function fetchStats(){
         E('streamToggle').checked=streamEnabled;
         E('streamBadge').textContent=streamEnabled?'Stream ON':'Stream OFF';
         E('streamBadge').className=streamEnabled?'badge badge-success':'badge badge-outline';
-    }catch(e){}
+        updateConnectionInfo();
+        E('authStatus').textContent='Clé API valide.';
+    }catch(e){E('authStatus').textContent='Serveur inaccessible.'}
 }
 
 async function checkStatus(){
     try{
-        const r=await fetch(BASE+'/status');
+        const r=await apiFetch('/status');
+        if(r.status===401){E('statusLabel').textContent='Authentification requise';E('authStatus').textContent='Clé API absente ou invalide.';return}
         const d=await r.json();
         const dot=E('statusDot'),label=E('statusLabel');
-        if(d.status.includes('Ready')){dot.className='status-dot online';label.textContent='Online'}
+        if(d.status.includes('Ready')){dot.className='status-dot online';label.textContent='Online';E('authStatus').textContent='Clé API valide.'}
         else{dot.className='status-dot offline';label.textContent='Disabled'}
     }catch(e){E('statusLabel').textContent='Offline'}
 }
 
 async function loadModels(){
     try{
-        const r=await fetch(BASE+'/v1/models');
+        const r=await apiFetch('/v1/models');
         const data=await r.json();
-        E('modelsTable').innerHTML=data.data.map(m=>'<tr><td><strong>'+m.id+'</strong></td><td>'+m.object+'</td><td>'+m.owned_by+'</td><td>'+new Date(m.created*1000).toLocaleDateString()+'</td></tr>').join('')
+        E('modelsTable').innerHTML=data.data.map(m=>'<tr><td><strong>'+esc(m.id)+'</strong></td><td>'+esc(m.object)+'</td><td>'+esc(m.owned_by)+'</td><td>'+new Date(m.created*1000).toLocaleDateString()+'</td></tr>').join('')
     }catch(e){E('modelsTable').innerHTML='<tr><td colspan="4" style="color:var(--destructive)">Failed to load</td></tr>'}
 }
 
 async function toggleStream(){
     streamEnabled=E('streamToggle').checked;
     try{
-        await fetch(BASE+'/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stream_enabled:streamEnabled})});
+        const response=await apiFetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stream_enabled:streamEnabled})});
+        if(!response.ok)throw new Error('HTTP '+response.status);
         E('streamBadge').textContent=streamEnabled?'Stream ON':'Stream OFF';
         E('streamBadge').className=streamEnabled?'badge badge-success':'badge badge-outline';
         addLog('Stream '+(streamEnabled?'enabled':'disabled'),'info')
@@ -267,9 +304,14 @@ async function quickTest(){
     input.disabled=true;
     addLog('API test: '+text.substring(0,60),'info');
     try{
-        const r=await fetch(BASE+'/v1/chat/completions',{
+        const modelResponse=await apiFetch('/v1/models');
+        if(!modelResponse.ok)throw new Error('Authentification requise ou modèles indisponibles');
+        const modelData=await modelResponse.json();
+        const model=modelData.data&&modelData.data[0]?modelData.data[0].id:null;
+        if(!model)throw new Error('Aucun provider configuré');
+        const r=await apiFetch('/v1/chat/completions',{
             method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({model:'deepseek-chat',messages:[{role:'user',content:text}],stream:false})
+            body:JSON.stringify({model,messages:[{role:'user',content:text}],stream:false})
         });
         const data=await r.json();
         if(data.choices&&data.choices[0]){
@@ -295,7 +337,7 @@ setInterval(fetchStats,3000);
 setInterval(checkStatus,5000);
 setInterval(updateClock,1000);
 fetchStats();checkStatus();updateClock();
-addLog('NEMAPI Bridge admin panel ready','info');
+addLog('API Bridge admin panel ready','info');
 </script>
 </body>
 </html>"""

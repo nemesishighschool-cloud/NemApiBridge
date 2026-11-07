@@ -1,0 +1,54 @@
+{
+  "provider": "Example AI",
+  "version": "1.0",
+  "package_name": "com.example.ai",
+  "selectors": {
+    "input": [
+      {
+        "by": "resource_id",
+        "value": "com.example.ai:id/prompt"
+      },
+      {
+        "by": "content_description",
+        "value": "Message",
+        "match": "contains"
+      }
+    ],
+    "send": [
+      {
+        "by": "resource_id",
+        "value": "com.example.ai:id/send"
+      },
+      {
+        "by": "content_description",
+        "value": "Send"
+      }
+    ],
+    "assistant_message": [
+      {
+        "by": "resource_id",
+        "value": "com.example.ai:id/answer"
+      }
+    ],
+    "generating": [
+      {
+        "by": "content_description",
+        "value": "Stop generating",
+        "match": "contains"
+      }
+    ],
+    "stop": [
+      {
+        "by": "content_description",
+        "value": "Stop generating"
+      }
+    ]
+  },
+  "timeouts": {
+    "element_ms": 10000,
+    "response_ms": 180000,
+    "poll_interval_ms": 750,
+    "stable_polls": 3
+  },
+  "max_history_chars": 8000
+}

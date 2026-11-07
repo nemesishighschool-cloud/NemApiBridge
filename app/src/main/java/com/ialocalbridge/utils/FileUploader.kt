@@ -26,7 +26,7 @@ class FileUploader {
 
     fun uploadWithFallback(file: File, filename: String): UploadResult {
         val errors = StringBuilder()
-        Log.d(TAG, "Starting super upload fallback chain (6 hosts) for $filename")
+        Log.d(TAG, "Starting configured upload fallback chain")
         
         // 1. Catbox
         try {

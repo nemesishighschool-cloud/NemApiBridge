@@ -1,0 +1,4 @@
+<resources>
+    <color name="status_success">#16804A</color>
+    <color name="status_warning">#B45309</color>
+</resources>

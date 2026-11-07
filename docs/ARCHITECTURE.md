@@ -1,8 +1,8 @@
 # API Bridge — Architecture cible
 
 **Version :** 3.0
-**Statut :** spécification de la prochaine version
-**Cible initiale :** application Android DeepSeek
+**Statut :** architecture de référence; l’état réellement implémenté et les validations sont indiqués ci-dessous
+**Cible :** application Android d’IA choisie et configurée par l’utilisateur
 **Plateforme d’exécution :** téléphone Android standard, non modifié
 
 ## 1. Objectif
@@ -11,7 +11,7 @@ API Bridge expose une application Android d’IA sous la forme d’un serveur HT
 
 Le pilotage repose sur l’inspection de l’arbre d’accessibilité Android et sur les actions sémantiques des éléments trouvés. L’automatisation repère le champ de saisie, les boutons et le contenu de réponse à partir de leurs identifiants de ressource, descriptions, libellés, classes et relations dans l’arbre. Elle ne requiert ni coordonnées enregistrées ni calibration visuelle.
 
-La version initiale vise DeepSeek. Le format d’adaptateur permet d’ajouter d’autres applications sans coder leurs sélecteurs directement dans le serveur.
+Les sélecteurs propres à une application sont importés dans un provider JSON. Aucun provider d’application n’est livré avec des sélecteurs supposés valides : ils doivent être relevés sur la version réellement installée.
 
 ## 2. Principes et contraintes
 
@@ -24,9 +24,9 @@ La version initiale vise DeepSeek. Le format d’adaptateur permet d’ajouter d
 | Intervention utilisateur | Activation du service d’accessibilité et connexion à l’application par l’utilisateur |
 | Serveur | HTTP local compatible OpenAI |
 | Accès réseau | Réseau local uniquement, avec authentification Bearer |
-| Charge UI | Une opération à la fois par appareil |
+| Charge UI | Une opération active et une en attente au maximum par appareil |
 | Streaming | SSE simulé après lecture de la réponse complète |
-| Adaptation | Configuration JSON par application, DeepSeek en premier |
+| Adaptation | Configuration JSON importée par l’utilisateur |
 | Dépendance | Pas d’accès aux méthodes privées ou interfaces non documentées de l’application cible |
 
 Un service d’accessibilité Android doit être activé volontairement par l’utilisateur dans les réglages du système. API Bridge ne tente ni d’activer ce service sans consentement, ni de contourner une authentification, un contrôle de compte ou un défi de sécurité.
@@ -43,7 +43,7 @@ API Bridge sur le téléphone
 │ Authentification, endpoints, SSE, statistiques│
 ├───────────────────────────────────────────────┤
 │ Couche de requête                             │
-│ Validation, historique, file d’attente unique │
+│ Validation, historique, file bornée            │
 ├───────────────────────────────────────────────┤
 │ Registre d’adaptateurs + exécuteur UI         │
 │ Sélecteurs sémantiques, attentes, lecture     │
@@ -74,9 +74,11 @@ Le serveur Android conserve l’API et les capacités générales d’API Bridge
 | `GET/POST` | `/stop` | Demande d’arrêt de l’opération active, si l’application cible le permet; `GET` reste accepté pour compatibilité |
 | `GET` | `/` | Interface d’administration locale |
 
-Toutes les routes de contrôle et de données sont protégées par `Authorization: Bearer <clé>`. `/health` peut être rendu accessible sans clé uniquement si cette option est explicitement activée. La clé est créée localement, conservée dans un stockage Android protégé et affichée uniquement dans les écrans de configuration autorisés.
+Toutes les routes de contrôle et de données, à l’exception de `GET /health`, sont protégées par `Authorization: Bearer <clé>`. `/` sert uniquement la coquille statique du tableau de bord; ses appels de données sont authentifiés côté navigateur. La clé est créée localement, chiffrée avec une clé Android Keystore et affichée dans la configuration Android.
 
-Le serveur n’est pas destiné à être exposé directement sur Internet. L’écoute et les règles réseau doivent limiter l’accès au réseau local; le mode USB/ADB peut être conservé comme option de connexion locale. Les interfaces web d’administration doivent également exiger l’authentification.
+Le serveur écoute sur les interfaces IPv4 mais refuse les connexions dont l’adresse cliente n’est ni loopback, ni privée, ni link-local. Il n’est pas destiné à être exposé directement sur Internet. Le tableau de bord n’affiche aucune donnée avant authentification.
+
+Le transport demeure HTTP sans TLS : l’authentification protège l’accès mais ne chiffre pas la clé ou les échanges sur le réseau. Utiliser uniquement un réseau de confiance ou ADB reverse.
 
 ### 4.2 Couche de requête et sessions
 
@@ -91,11 +93,11 @@ La requête OpenAI est validée avant toute action UI. Le serveur :
 
 Le rejeu d’historique est limité en taille par une configuration. La troncature conserve les messages les plus récents et ne coupe pas silencieusement le message utilisateur courant. Le texte effectivement soumis est contrôlé par l’adaptateur : certains écrans peuvent ne pas accepter de très longues entrées.
 
-Une file d’attente évite que plusieurs requêtes modifient simultanément la même conversation. Sa taille maximale et le délai d’attente sont configurables. Les requêtes en attente excédentaires reçoivent une erreur explicite plutôt qu’un traitement concurrent ou une perte silencieuse.
+Une file d’attente évite que plusieurs requêtes modifient simultanément la même conversation. L’implémentation accepte au plus une opération active et une opération en attente; la requête en attente expire après 15 secondes et toute surcharge est signalée.
 
 ### 4.3 Registre d’adaptateurs
 
-Un adaptateur décrit comment reconnaître les éléments et états nécessaires pour une application donnée. La logique commune reste dans le serveur et l’exécuteur; les sélecteurs DeepSeek sont conservés dans `app/src/main/assets/adapters/deepseek.json`.
+Un adaptateur décrit comment reconnaître les éléments et états nécessaires pour une application donnée. La logique commune reste dans le serveur et l’exécuteur; les configurations importées sont stockées localement dans les préférences privées de l’application.
 
 Un adaptateur contient au minimum :
 
@@ -107,7 +109,7 @@ Un adaptateur contient au minimum :
 - les délais et limites de texte;
 - les variantes de sélecteurs autorisées, ordonnées par priorité.
 
-Exemple indicatif :
+Exemple indicatif; le fichier complet à copier est [`provider-template.json`](provider-template.json) :
 
 ```json
 {
@@ -129,7 +131,9 @@ Exemple indicatif :
   },
   "timeouts": {
     "element_ms": 10000,
-    "response_ms": 180000
+    "response_ms": 180000,
+    "poll_interval_ms": 750,
+    "stable_polls": 3
   },
   "max_history_chars": 8000
 }
@@ -150,21 +154,21 @@ L’exécuteur reçoit une requête normalisée et déroule un scénario fini :
 7. Lire le texte de la réponse depuis les nœuds accessibles du message assistant.
 8. Vérifier que le texte appartient bien à la nouvelle réponse, puis le transmettre au serveur.
 
-L’exécuteur privilégie les identifiants de ressource, puis les descriptions, textes, classes et relations parent/enfant selon l’adaptateur. Une correspondance ambiguë, absente ou inaccessible produit une erreur diagnostiquable. Il ne choisit pas arbitrairement un élément et ne simule pas de tap à une position d’écran comme solution de repli.
+L’exécuteur privilégie, dans l’ordre importé, les identifiants de ressource, descriptions, textes ou classes. Les contrôles d’entrée et d’envoi doivent correspondre à un seul nœud; une réponse peut correspondre à plusieurs nœuds, auquel cas le dernier est lu. Une correspondance absente ou ambiguë produit une erreur diagnostiquable. Il ne choisit pas arbitrairement un contrôle et ne simule pas de tap à une position d’écran comme solution de repli.
 
-La détection de fin combine, selon les éléments accessibles dans l’application cible, les événements de contenu, les changements de texte, les indicateurs de chargement, l’apparition/disparition des commandes d’arrêt et la stabilité de l’arbre. Une simple absence momentanée d’événements n’est pas considérée à elle seule comme preuve qu’une réponse est terminée.
+La détection de fin relit la réponse accessible et, si configuré, l’indicateur de génération. Le résultat doit être nouveau et stable pendant le nombre de lectures configuré; une réponse vide ou un simple délai sans résultat n’est pas transformé en succès.
 
 L’exécuteur limite l’inspection au paquet cible, ne journalise pas les textes de conversation en production et libère les objets d’accessibilité après usage. Il n’interfère pas avec une fenêtre de connexion ou de vérification : si l’application exige une action manuelle, l’opération se termine avec un état « intervention utilisateur requise ».
 
 ### 4.5 Service d’accessibilité
 
-Le service déclare uniquement les capacités nécessaires pour lire les fenêtres pertinentes et actionner leurs nœuds accessibles. L’utilisateur l’active dans les paramètres Android. Le service transmet les événements utiles à l’exécuteur et expose un état clair de disponibilité.
+Le service déclare uniquement les capacités nécessaires pour lire les fenêtres pertinentes et actionner leurs nœuds accessibles. L’utilisateur l’active dans les paramètres Android. Le filtre de paquet est réglé sur le provider courant. L’inspecteur, accessible depuis la fenêtre flottante, affiche à la demande les propriétés sémantiques et copie les sélecteurs; il n’expose pas les coordonnées de l’écran.
 
 La configuration doit être explicite, limitée et compréhensible pour l’utilisateur. Les journaux d’événements évitent de conserver le contenu des messages, identifiants personnels ou données sensibles.
 
 ### 4.6 Interface d’administration
 
-L’interface locale doit permettre de :
+L’interface Android permet de :
 
 - consulter l’adresse réseau, le port et l’état du service;
 - activer le serveur et choisir un adaptateur;
@@ -173,8 +177,10 @@ L’interface locale doit permettre de :
 - configurer le délai maximal, la limite d’historique et le streaming;
 - consulter des statistiques agrégées sans contenu de conversation;
 - arrêter une génération lorsqu’une action correspondante est disponible.
+- importer, nommer, sélectionner et supprimer des providers JSON;
+- inspecter l’interface cible et copier les sélecteurs détectés.
 
-La configuration ne propose pas de zones de tap ou de calibration de coordonnées.
+Le tableau de bord web sert les statistiques, modèles, test rapide et configuration du streaming après saisie de la clé dans la session du navigateur. La configuration ne propose pas de zones de tap ou de calibration de coordonnées.
 
 ## 5. Contrat API OpenAI
 
@@ -208,7 +214,7 @@ Le serveur retourne des erreurs structurées et distingue au minimum :
 - sélecteur manquant ou ambigu;
 - délai d’attente dépassé;
 - réponse vide ou non lisible dans l’arbre d’accessibilité;
-- file d’attente pleine ou demande d’arrêt non prise en charge.
+- file d’attente pleine, expiration d’attente ou demande d’arrêt non prise en charge.
 
 Aucun de ces cas ne doit être transformé en une réponse assistant ressemblant à un succès. Le panneau d’administration indique l’action de rétablissement utile sans révéler de contenu sensible.
 
@@ -229,45 +235,46 @@ Aucun de ces cas ne doit être transformé en une réponse assistant ressemblant
 - Les mises à jour, langues, variantes de compte et changements d’écran peuvent nécessiter une mise à jour de l’adaptateur.
 - Certaines vues personnalisées exposent peu ou pas de texte accessible; ces états doivent échouer clairement plutôt que deviner.
 - Le téléphone doit rester allumé et l’application cible accessible pendant l’opération.
-- Une seule requête est active par appareil; le parallélisme exige des appareils distincts et n’est pas une capacité du worker unique.
+- Une seule requête est active par appareil; une seule peut attendre au maximum. Le parallélisme UI exige des appareils distincts.
 - Les réponses longues, le réseau mobile et les limitations propres à l’application peuvent dépasser les délais configurés.
 - L’extraction du texte d’interface ne garantit pas la conservation de la mise en forme ou de tous les éléments d’une réponse.
 
-## 9. Arborescence cible
+## 9. Arborescence implémentée
 
 ```text
 api_bridge/
-├── app/src/main/
-│   ├── java/com/ialocalbridge/
-│   │   ├── server/             # HTTP, auth, endpoints, SSE
-│   │   ├── logic/              # requêtes, sessions, file, adaptateurs
-│   │   ├── accessibility/      # inspection et actions sur les nœuds UI
-│   │   ├── executor/           # états, délais, extraction de réponse
-│   │   ├── ui/                 # configuration et état Android
-│   │   └── utils/              # outils partagés, upload et parsing
-│   ├── assets/adapters/
-│   │   └── deepseek.json
-│   └── res/
+├── app/src/main/java/com/ialocalbridge/
+│   ├── ApiKeyStore.kt
+│   ├── AutomationCoordinator.kt
+│   ├── ClickAccessibilityService.kt
+│   ├── FloatingWindowService.kt
+│   ├── LocalApiServer.kt
+│   ├── MainActivity.kt
+│   ├── ProviderRepository.kt
+│   ├── models/ProviderConfig.kt
+│   └── utils/                 # upload, réseau, tool calls, dashboard web
+├── app/src/test/              # validation du contrat provider
 ├── docs/
-│   └── ARCHITECTURE.md
+│   ├── ARCHITECTURE.md
+│   └── provider-template.json
 ├── AGENTS.md
 └── README.md
 ```
 
-Cette arborescence est logique; elle peut être adaptée aux packages déjà établis si cela réduit le risque de régression.
+Les providers importés et la clé sont stockés dans les préférences privées de l’application; la clé est chiffrée avec Android Keystore.
 
 ## 10. Feuille de route
 
-| Priorité | Travail | Critère d’acceptation |
+| Priorité | Travail | État |
 |---|---|---|
-| P0 | Inspecter l’arbre d’accessibilité de DeepSeek | Les écrans, champs, boutons et réponses nécessaires sont observables sans coordonnées |
-| P1 | Créer l’adaptateur DeepSeek | Les sélecteurs sont déclaratifs, testés sur les états clés et échouent proprement en cas d’ambiguïté |
-| P2 | Implémenter l’exécuteur UI | Envoi, attente de fin et lecture d’une réponse fonctionnent via actions de nœuds |
-| P3 | Ajouter file d’attente et gestion d’états | Une seule requête s’exécute; les erreurs sont explicites et récupérables |
-| P4 | Relier le serveur OpenAI à l’exécuteur | Requête locale authentifiée avec réponse JSON valide |
-| P5 | Valider le streaming SSE simulé | Un client compatible reçoit des chunks et `[DONE]` |
-| P6 | Valider le rejeu d’historique et tool calls | Plusieurs tours produisent un contexte cohérent; les tool calls sont structurés |
-| P7 | Finaliser l’interface de configuration et sécurité | Activation, clé, état, logs expurgés et configuration sont utilisables sur téléphone |
-| P8 | Valider uploads et autres adaptateurs | Fonctions existantes préservées et nouveaux adaptateurs ajoutables par configuration |
+| P0 | Inspecter l’arbre d’accessibilité | Inspecteur intégré; sélecteurs d’une application réelle à vérifier sur appareil |
+| P1 | Importer et valider des providers JSON | Implémenté; validation unitaire du contrat |
+| P2 | Envoyer, attendre et lire via les nœuds UI | Implémenté; validation avec une application cible réelle encore requise |
+| P3 | File bornée et états d’erreur | Implémenté; au plus une requête active et une en attente |
+| P4 | Serveur OpenAI local authentifié | Implémenté; build et contrat à vérifier via CI |
+| P5 | Streaming SSE simulé | Implémenté; test sur client OpenAI à réaliser |
+| P6 | Historique texte et tool calls | Implémenté; limites multimodales documentées |
+| P7 | Interface Android et tableau de bord | Implémenté; test ergonomique sur téléphone à réaliser |
+| P8 | Uploads et providers supplémentaires | Upload existant conservé; adaptations propres à chaque app restent à configurer |
 
-P0 est bloquant : si les éléments nécessaires ne sont pas exposés de manière accessible, le projet doit documenter précisément les limites avant d’élargir la portée ou de choisir une autre stratégie.
+La compilation locale de cette session est bloquée avant la résolution du projet : le JDK présent est 25, incompatible avec le Gradle 8.0 du dépôt. Le workflow GitHub Actions est la validation de compilation prévue. Aucun émulateur ou conteneur Android n’a été créé. L’automatisation réelle ne peut être déclarée validée qu’après essai sur un téléphone et une application disposant des sélecteurs correspondants.
