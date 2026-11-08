@@ -1,4 +1,3 @@
 <resources>
-    <color name="status_success">#16804A</color>
-    <color name="status_warning">#B45309</color>
+<color name="nem_background">#07111F</color><color name="nem_card">#111F30</color><color name="nem_surface">#172A3D</color><color name="nem_text">#F1F7FB</color><color name="nem_muted">#95AABD</color><color name="nem_teal">#36E4CB</color><color name="status_success">#55E5B8</color><color name="status_warning">#FFC779</color>
 </resources>

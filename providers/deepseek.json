@@ -1,0 +1,63 @@
+{
+  "provider": "DeepSeek",
+  "version": "2.7.5-en",
+  "package_name": "com.deepseek.chat",
+  "selectors": {
+    "input": [
+      {
+        "by": "class_name",
+        "value": "android.widget.EditText"
+      }
+    ],
+    "input_activation": [
+      {
+        "by": "text",
+        "value": "Type a message or hold to speak"
+      }
+    ],
+    "send": [
+      {
+        "by": "content_description",
+        "value": "Send"
+      }
+    ],
+    "assistant_message": [
+      {
+        "by": "content_description",
+        "value": "Copy",
+        "ancestor_levels": 2,
+        "text_only": true,
+        "reject_clipped": true,
+        "reconstruct_clipped": true
+      }
+    ],
+    "generating": [
+      {
+        "by": "content_description",
+        "value": "Stop"
+      }
+    ],
+    "stop": [
+      {
+        "by": "content_description",
+        "value": "Stop"
+      }
+    ],
+    "scroll_to_end": [
+      {
+        "by": "scrollable",
+        "value": "true"
+      }
+    ],
+    "allow_input_gesture": true,
+    "allow_reconstruction_gesture": true,
+    "detect_identical_responses": true
+  },
+  "timeouts": {
+    "element_ms": 10000,
+    "response_ms": 180000,
+    "poll_interval_ms": 750,
+    "stable_polls": 3
+  },
+  "max_history_chars": 8000
+}

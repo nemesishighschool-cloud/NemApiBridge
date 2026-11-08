@@ -12,13 +12,29 @@ android {
         minSdk 24
         targetSdk 33
         versionCode 1
-        versionName "1.0"
+        versionName "1.0.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release secrets are supplied outside the repository, never committed.
+    signingConfigs {
+        release {
+            def filePath = System.getenv("NEM_SIGNING_STORE_FILE")
+            def password = System.getenv("NEM_SIGNING_PASSWORD")
+            if (filePath && password) {
+                storeFile file(filePath)
+                storePassword password
+                keyAlias "nemapibridge"
+                keyPassword password
+            }
+        }
+    }
     buildTypes {
         release {
+            if (System.getenv("NEM_SIGNING_STORE_FILE") && System.getenv("NEM_SIGNING_PASSWORD")) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

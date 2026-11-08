@@ -73,105 +73,199 @@ class AutomationCoordinator(context: Context) {
         withContext(Dispatchers.Main.immediate) {
             service.configureTarget(config.packageName)
         }
-        val controls = awaitControls(service, config)
+        scrollToEnd(service, config)
         val initialAnswer = withContext(Dispatchers.Main.immediate) {
-            val input = controls.first
-            val send = controls.second
             try {
-                val previous = try {
-                    service.readLatestText(config.packageName, config.selectors.assistantMessage, "assistant_message")
-                } catch (e: AutomationException) {
-                    if (e.errorCode == "selector_missing") "" else throw e
-                }
-                service.setText(input, prompt)
-                service.click(send, "send")
-                previous
-            } finally {
-                input.recycle()
-                send.recycle()
+                service.readLatestText(config.packageName, config.selectors.assistantMessage, "assistant_message")
+            } catch (e: AutomationException) {
+                if (e.errorCode == "selector_missing") "" else throw e
             }
         }
-
-        val startedAt = System.currentTimeMillis()
-        var lastObserved = ""
-        var stablePolls = 0
-        var hasNewAnswer = false
-
-        while (System.currentTimeMillis() - startedAt < config.timeouts.responseMs) {
-            if (cancelled.get()) {
-                throw AutomationException("cancelled", "La requête a été arrêtée.")
+        val baseline = if (config.selectors.detectIdenticalResponses) withContext(Dispatchers.Main.immediate) {
+            service.responseBaseline(config.packageName, config.selectors.assistantMessage, prompt)
+        } else null
+        try {
+            val input = awaitInput(service, config)
+            withContext(Dispatchers.Main.immediate) {
+                try { service.setText(input, prompt) } finally { input.recycle() }
             }
-            delay(config.timeouts.pollIntervalMs)
+            // Some apps only create the send control after the input is non-empty.
+            val send = awaitNode(service, config, config.selectors.send, "send")
+            withContext(Dispatchers.Main.immediate) {
+                try { service.click(send, "send") } finally { send.recycle() }
+            }
 
-            val (answer, isGenerating) = withContext(Dispatchers.Main.immediate) {
-                service.requireTargetForeground(config.packageName)
-                val currentAnswer = try {
-                    service.readLatestText(
-                        config.packageName,
-                        config.selectors.assistantMessage,
-                        "assistant_message"
-                    )
-                } catch (e: AutomationException) {
-                    if (e.errorCode == "selector_missing") "" else throw e
+            val startedAt = System.currentTimeMillis()
+            var lastObserved = ""
+            var stablePolls = 0
+
+            while (System.currentTimeMillis() - startedAt < config.timeouts.responseMs) {
+                if (cancelled.get()) {
+                    throw AutomationException("cancelled", "La requête a été arrêtée.")
                 }
-                val active = service.hasAnyMatch(config.packageName, config.selectors.generating)
-                currentAnswer to active
-            }
+                delay(config.timeouts.pollIntervalMs)
 
-            if (answer.isNotBlank() && answer != initialAnswer) hasNewAnswer = true
-            if (hasNewAnswer && answer.isNotBlank()) {
-                if (answer == lastObserved) {
-                    stablePolls++
+                scrollToEnd(service, config)
+                val (answer, isGenerating) = withContext(Dispatchers.Main.immediate) {
+                    service.requireTargetForeground(config.packageName)
+                    val currentAnswer = try {
+                        service.readLatestText(
+                            config.packageName,
+                            config.selectors.assistantMessage,
+                            "assistant_message"
+                        )
+                    } catch (e: AutomationException) {
+                        if (e.errorCode == "selector_missing") "" else throw e
+                    }
+                    val active = service.hasAnyMatch(config.packageName, config.selectors.generating)
+                    currentAnswer to active
+                }
+
+                // A shrinking view of the previous response is not evidence of a new answer.
+                val resemblesPrevious = answer.isNotBlank() && initialAnswer.isNotBlank() && initialAnswer.contains(answer)
+                val newByIdentity = if (resemblesPrevious && baseline != null) {
+                    withContext(Dispatchers.Main.immediate) {
+                        service.hasNewAnswerAfterPrompt(config.packageName, config.selectors.assistantMessage, prompt, baseline)
+                    }
+                } else false
+                val candidateIsNew = answer.isNotBlank() && (!resemblesPrevious || newByIdentity)
+                if (candidateIsNew) {
+                    if (answer == lastObserved) {
+                        stablePolls++
+                    } else {
+                        lastObserved = answer
+                        stablePolls = 0
+                    }
+                    if (!isGenerating && stablePolls >= config.timeouts.stablePolls) {
+                        return readCompleteResponse(service, config)
+                    }
                 } else {
-                    lastObserved = answer
+                    lastObserved = ""
                     stablePolls = 0
                 }
-                if (!isGenerating && stablePolls >= config.timeouts.stablePolls) {
-                    return answer
-                }
             }
-        }
 
-        throw AutomationException(
-            "response_timeout",
-            "Aucune réponse complète détectée après ${config.timeouts.responseMs / 1000} secondes."
-        )
+            throw AutomationException(
+                "response_timeout",
+                "Aucune réponse complète détectée après ${config.timeouts.responseMs / 1000} secondes."
+            )
+        } finally { baseline?.recycle() }
     }
 
-    private suspend fun awaitControls(
+    private suspend fun readCompleteResponse(service: ClickAccessibilityService, config: ProviderConfig): String {
+        val (container, selector) = withContext(Dispatchers.Main.immediate) {
+            service.latestResponseContainer(config.packageName, config.selectors.assistantMessage, "assistant_message")
+        }
+        try {
+            var fragments = withContext(Dispatchers.Main.immediate) {
+                service.responseTextParts(container)
+            }
+            if (!selector.textOnly) {
+                return withContext(Dispatchers.Main.immediate) {
+                    service.readLatestText(config.packageName, listOf(selector), "assistant_message", requireComplete = true)
+                }
+            }
+            if (!selector.rejectClipped) return fragments.joinToString("\n").trim()
+            if (!withContext(Dispatchers.Main.immediate) { service.isClippedAtScrollStart(container) }) {
+                return fragments.joinToString("\n").trim()
+            }
+            if (!selector.reconstructClipped) throw AutomationException("response_incomplete", "Le début de la réponse est hors de la zone accessible.")
+
+            repeat(40) {
+                if (cancelled.get()) throw AutomationException("cancelled", "La requête a été arrêtée.")
+                val singleBefore = if (fragments.size == 1) withContext(Dispatchers.Main.immediate) {
+                    service.findSingleTextNode(container)
+                } else null
+                try {
+                    val moved = withContext(Dispatchers.Main.immediate) {
+                        service.requireTargetForeground(config.packageName)
+                        if (config.selectors.allowReconstructionGesture) {
+                            withTimeoutOrNull(3_000) { service.scrollBackwardShort(config.packageName, config.selectors.scrollToEnd) } ?: false
+                        } else {
+                            service.scrollBackward(config.packageName, config.selectors.scrollToEnd)
+                        }
+                    }
+                    if (!moved) throw AutomationException("response_incomplete", "Le début de la réponse ne peut pas être atteint.")
+                    delay(400)
+                    val snapshot = withContext(Dispatchers.Main.immediate) {
+                        if (!container.refresh() || !container.isVisibleToUser || container.packageName?.toString() != config.packageName) {
+                            throw AutomationException("response_incomplete", "Le conteneur de réponse a changé pendant la lecture.")
+                        }
+                        val parts = service.responseTextParts(container)
+                        val singleAfter = if (parts.size == 1 && singleBefore != null) service.findSingleTextNode(container) else null
+                        val sameNode = try { singleAfter != null && singleAfter == singleBefore } finally { singleAfter?.recycle() }
+                        Triple(parts, service.isClippedAtScrollStart(container), sameNode)
+                    }
+                    fragments = ResponseFragmentStitcher.prepend(snapshot.first, fragments, snapshot.third)
+                    if (!snapshot.second) {
+                        val result = fragments.joinToString("\n").trim()
+                        if (result.length > MAX_PROMPT_CHARS) throw AutomationException("response_too_large", "La réponse dépasse la limite de lecture.")
+                        scrollToEnd(service, config)
+                        return result
+                    }
+                } finally { singleBefore?.recycle() }
+
+            }
+            throw AutomationException("response_incomplete", "Limite de défilement atteinte pendant la lecture de la réponse.")
+        } finally { container.recycle() }
+    }
+
+    private suspend fun scrollToEnd(service: ClickAccessibilityService, config: ProviderConfig) {
+        if (config.selectors.scrollToEnd.isEmpty()) return
+        repeat(40) {
+            if (cancelled.get()) throw AutomationException("cancelled", "La requête a été arrêtée.")
+            val moved = withContext(Dispatchers.Main.immediate) {
+                service.scrollForward(config.packageName, config.selectors.scrollToEnd)
+            }
+            if (!moved) return
+            // Let Compose finish the scroll before asking for the next page.
+            delay(250)
+        }
+        throw AutomationException("action_failed", "Limite de défilement atteinte avant la fin de la conversation.")
+    }
+
+    private suspend fun awaitInput(service: ClickAccessibilityService, config: ProviderConfig): AccessibilityNodeInfo {
+        val found = withContext(Dispatchers.Main.immediate) {
+            try { service.findUniqueNode(config.packageName, config.selectors.input, "input") }
+            catch (e: AutomationException) { if (e.errorCode == "selector_missing") null else throw e }
+        }
+        if (found != null) return found
+        if (config.selectors.inputActivation.isNotEmpty()) {
+            val activation = awaitNode(service, config, config.selectors.inputActivation, "input_activation")
+            withContext(Dispatchers.Main.immediate) {
+                try {
+                    try { service.click(activation, "input_activation") }
+                    catch (e: AutomationException) {
+                        if (e.errorCode != "action_failed") throw e
+                        if (!config.selectors.allowInputGesture) throw AutomationException("user_intervention_required", "Le champ de saisie n’expose pas de clic accessible. Ouvrez-le manuellement puis réessayez.")
+                        val completed = withTimeoutOrNull(3_000) {
+                            service.activateInputByGesture(config.packageName, activation)
+                        } ?: false
+                        if (!completed) throw AutomationException("action_failed", "L’activation du champ par geste a échoué.")
+                    }
+                } finally { activation.recycle() }
+            }
+        }
+        return awaitNode(service, config, config.selectors.input, "input")
+    }
+
+    private suspend fun awaitNode(
         service: ClickAccessibilityService,
-        config: ProviderConfig
-    ): Pair<AccessibilityNodeInfo, AccessibilityNodeInfo> {
+        config: ProviderConfig,
+        selectors: List<com.ialocalbridge.models.UiSelector>,
+        label: String
+    ): AccessibilityNodeInfo {
         val deadline = System.currentTimeMillis() + config.timeouts.elementMs
         while (true) {
             if (cancelled.get()) throw AutomationException("cancelled", "La requête a été arrêtée.")
-            val controls = withContext(Dispatchers.Main.immediate) {
+            val node = withContext(Dispatchers.Main.immediate) {
                 service.requireTargetForeground(config.packageName)
-                val input = try {
-                    service.findUniqueNode(config.packageName, config.selectors.input, "input")
-                } catch (e: AutomationException) {
-                    if (e.errorCode == "selector_missing") null else throw e
-                }
-                val send = try {
-                    service.findUniqueNode(config.packageName, config.selectors.send, "send")
-                } catch (e: AutomationException) {
-                    if (e.errorCode == "selector_missing") null else {
-                        input?.recycle()
-                        throw e
-                    }
-                }
-                if (input != null && send != null) input to send else {
-                    input?.recycle()
-                    send?.recycle()
-                    null
-                }
+                try { service.findUniqueNode(config.packageName, selectors, label) }
+                catch (e: AutomationException) { if (e.errorCode == "selector_missing") null else throw e }
             }
-            if (controls != null) return controls
+            if (node != null) return node
             if (System.currentTimeMillis() >= deadline) {
-                throw AutomationException(
-                    "selector_missing",
-                    "Les sélecteurs input/send n’ont pas trouvé de contrôle après ${config.timeouts.elementMs / 1000} secondes."
-                )
+                throw AutomationException("selector_missing", "Le contrôle $label est introuvable après ${config.timeouts.elementMs / 1000} secondes.")
             }
             delay(config.timeouts.pollIntervalMs)
         }

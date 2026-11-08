@@ -17,17 +17,35 @@ data class ProviderConfig(
 
 data class ProviderSelectors(
     val input: List<UiSelector> = emptyList(),
+    @SerializedName("input_activation")
+    val inputActivation: List<UiSelector> = emptyList(),
+    @SerializedName("allow_input_gesture")
+    val allowInputGesture: Boolean = false,
+    @SerializedName("allow_reconstruction_gesture")
+    val allowReconstructionGesture: Boolean = false,
+    @SerializedName("detect_identical_responses")
+    val detectIdenticalResponses: Boolean = false,
     val send: List<UiSelector> = emptyList(),
     @SerializedName("assistant_message")
     val assistantMessage: List<UiSelector> = emptyList(),
     val generating: List<UiSelector> = emptyList(),
-    val stop: List<UiSelector> = emptyList()
+    val stop: List<UiSelector> = emptyList(),
+    @SerializedName("scroll_to_end")
+    val scrollToEnd: List<UiSelector> = emptyList()
 )
 
 data class UiSelector(
     val by: String = "",
     val value: String = "",
-    val match: String = "exact"
+    val match: String = "exact",
+    @SerializedName("ancestor_levels")
+    val ancestorLevels: Int = 0,
+    @SerializedName("text_only")
+    val textOnly: Boolean = false,
+    @SerializedName("reject_clipped")
+    val rejectClipped: Boolean = false,
+    @SerializedName("reconstruct_clipped")
+    val reconstructClipped: Boolean = false
 )
 
 data class ProviderTimeouts(
@@ -44,7 +62,7 @@ data class ProviderTimeouts(
 object ProviderConfigParser {
     private val gson = Gson()
     private val packagePattern = Regex("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")
-    private val selectorTypes = setOf("resource_id", "content_description", "text", "class_name")
+    private val selectorTypes = setOf("resource_id", "content_description", "text", "class_name", "scrollable")
 
     fun parse(json: String): ProviderConfig {
         require(json.length <= MAX_CONFIG_CHARS) { "Le fichier de configuration dépasse 512 Ko." }
@@ -96,19 +114,27 @@ object ProviderConfigParser {
             "timeouts.stable_polls doit être compris entre 2 et 10."
         }
         val input = requireNotNull(selectors.input) { "La liste selectors.input est invalide." }
+        val activation = requireNotNull(selectors.inputActivation) { "La liste selectors.input_activation est invalide." }
         val send = requireNotNull(selectors.send) { "La liste selectors.send est invalide." }
         val assistantMessages = requireNotNull(selectors.assistantMessage) {
             "La liste selectors.assistant_message est invalide."
         }
         val generating = requireNotNull(selectors.generating) { "La liste selectors.generating est invalide." }
         val stop = requireNotNull(selectors.stop) { "La liste selectors.stop est invalide." }
+        require(!selectors.allowInputGesture || activation.isNotEmpty()) { "allow_input_gesture nécessite input_activation." }
         require(input.isNotEmpty()) { "Le provider doit définir au moins un sélecteur input." }
         require(send.isNotEmpty()) { "Le provider doit définir au moins un sélecteur send." }
         require(assistantMessages.isNotEmpty()) {
             "Le provider doit définir au moins un sélecteur assistant_message."
         }
 
-        val allSelectors = input + send + assistantMessages + generating + stop
+        val scrollToEnd = requireNotNull(selectors.scrollToEnd) { "La liste selectors.scroll_to_end est invalide." }
+        val safeAssistantMessages = assistantMessages.map { requireNotNull(it) { "Un sélecteur est null." } }
+        require(!selectors.allowReconstructionGesture || safeAssistantMessages.any { it.reconstructClipped }) { "allow_reconstruction_gesture nécessite reconstruct_clipped." }
+        require(safeAssistantMessages.none { it.reconstructClipped && (!it.rejectClipped || !it.textOnly || scrollToEnd.isEmpty()) }) {
+            "reconstruct_clipped nécessite reject_clipped, text_only et scroll_to_end."
+        }
+        val allSelectors = input + activation + send + assistantMessages + generating + stop + scrollToEnd
         allSelectors.forEach { selector ->
             val nonNullSelector = requireNotNull(selector) { "Un sélecteur est null." }
             val by = requireNotNull(nonNullSelector.by) { "Le champ by d’un sélecteur est requis." }
@@ -120,6 +146,8 @@ object ProviderConfigParser {
             require(value.isNotBlank() && value.length <= MAX_SELECTOR_CHARS) {
                 "La valeur d’un sélecteur est vide ou trop longue."
             }
+            require(by != "scrollable" || value in setOf("true", "false")) { "Un sélecteur scrollable doit valoir true ou false." }
+            require(nonNullSelector.ancestorLevels in 0..8) { "ancestor_levels doit être compris entre 0 et 8." }
             require(match in setOf("exact", "contains", "starts_with")) {
                 "Le mode de correspondance '$match' n’est pas pris en charge."
             }

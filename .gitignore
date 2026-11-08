@@ -13,3 +13,11 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Android module outputs
+/app/build/
+
+# Never commit signing materials
+*.jks
+*.keystore
+*.p12

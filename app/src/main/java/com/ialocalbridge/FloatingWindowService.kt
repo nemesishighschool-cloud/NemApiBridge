@@ -48,18 +48,30 @@ class FloatingWindowService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val preferences = getSharedPreferences("app_prefs", MODE_PRIVATE)
-        selectedPort = intent?.getIntExtra("port", preferences.getInt("server_port", DEFAULT_PORT))
+        val requestedPort = intent?.getIntExtra("port", preferences.getInt("server_port", DEFAULT_PORT))
             ?: preferences.getInt("server_port", DEFAULT_PORT)
-        selectedProvider = intent?.getStringExtra("provider")
+        val requestedProvider = intent?.getStringExtra("provider")
             ?: preferences.getString("active_provider", "").orEmpty()
-
+        if (isServerRunning && requestedPort != selectedPort) stopServer()
+        selectedPort = requestedPort
+        selectedProvider = requestedProvider
         super.startForeground(NOTIFICATION_ID, buildNotification("Préparation du serveur local"))
-        if (!isServerRunning) startServer()
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            runtimeState = RuntimeState(error = "Autorisation de superposition manquante.")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (!isServerRunning) startServer() else runtimeState = RuntimeState(true, selectedPort, selectedProvider)
+
         return START_STICKY
     }
 
     private fun startServer() {
-        if (ProviderRepository(this).get(selectedProvider) == null) {
+        val repository = ProviderRepository(this)
+        // The active profile can also be changed through the authenticated API.
+        selectedProvider = repository.getActiveName() ?: selectedProvider
+        if (repository.get(selectedProvider) == null) {
+            runtimeState = RuntimeState(error = "Provider manquant.")
             updateFloatingState(false, "Provider manquant")
             Toast.makeText(this, "Importe et sélectionne un provider avant de démarrer.", Toast.LENGTH_LONG).show()
             return
@@ -70,14 +82,16 @@ class FloatingWindowService : Service() {
             apiServer = LocalApiServer(selectedPort, this)
             apiServer?.start()
             isServerRunning = true
+            runtimeState = RuntimeState(true, selectedPort, selectedProvider)
             val address = "http://${NetworkHelper.getIPAddress()}:$selectedPort"
             updateFloatingState(true, address)
-            updateNotification("API Bridge actif sur le port $selectedPort")
+            updateNotification("NemApiBridge actif sur le port $selectedPort")
         } catch (e: Exception) {
             Log.e(TAG, "Unable to start local server: ${e.javaClass.simpleName}")
             apiServer?.stop()
             apiServer = null
             isServerRunning = false
+            runtimeState = RuntimeState(error = "Impossible de démarrer le serveur sur le port $selectedPort.")
             updateFloatingState(false, "Erreur de démarrage")
             Toast.makeText(this, "Impossible de démarrer le serveur : ${e.message}", Toast.LENGTH_LONG).show()
         }
@@ -86,8 +100,10 @@ class FloatingWindowService : Service() {
     @SuppressLint("InflateParams")
     override fun onCreate() {
         super.onCreate()
+        instance = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        floatingView = LayoutInflater.from(this).inflate(R.layout.floating_control_window, null)
+        val themedContext = androidx.appcompat.view.ContextThemeWrapper(this, androidx.appcompat.R.style.Theme_AppCompat_Light_NoActionBar)
+        floatingView = LayoutInflater.from(themedContext).inflate(R.layout.floating_control_window, null)
         val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -108,6 +124,7 @@ class FloatingWindowService : Service() {
         try {
             windowManager.addView(floatingView, params)
             setupControls()
+            applyPanelVisibility()
         } catch (e: SecurityException) {
             Log.e(TAG, "Overlay permission is missing", e)
             stopSelf()
@@ -121,6 +138,13 @@ class FloatingWindowService : Service() {
         val stopGeneration = floatingView.findViewById<Button>(R.id.btn_stop_generation)
         val inspect = floatingView.findViewById<Button>(R.id.btn_inspect_ui)
         val close = floatingView.findViewById<ImageButton>(R.id.btn_close)
+        val expand = floatingView.findViewById<Button>(R.id.btn_expand)
+        val extra = floatingView.findViewById<View>(R.id.extra_actions)
+        expand.setOnClickListener {
+            val expanded = extra.visibility != View.VISIBLE
+            extra.visibility = if (expanded) View.VISIBLE else View.GONE
+            expand.contentDescription = if (expanded) "Masquer les outils du panneau" else "Afficher les outils du panneau"
+        }
 
         dragHandle.setOnTouchListener { _, event ->
             when (event.action) {
@@ -163,6 +187,10 @@ class FloatingWindowService : Service() {
         close.setOnClickListener { stopSelf() }
     }
 
+    private fun applyPanelVisibility() {
+        if (::floatingView.isInitialized) floatingView.visibility = if (dashboardVisible) View.GONE else View.VISIBLE
+    }
+
     private fun inspectTargetUi() {
         val providerName = ProviderRepository(this).getActiveName() ?: selectedProvider
         val config = ProviderRepository(this).get(providerName)
@@ -200,7 +228,7 @@ class FloatingWindowService : Service() {
                     element.text?.let { selectors.put(selector("text", it)) }
                     element.className?.let { selectors.put(selector("class_name", it)) }
                     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("API Bridge selectors", selectors.toString(2)))
+                    clipboard.setPrimaryClip(ClipData.newPlainText("NemApiBridge selectors", selectors.toString(2)))
                     Toast.makeText(this, "Sélecteurs copiés.", Toast.LENGTH_SHORT).show()
                 }
                 .setNegativeButton("Fermer", null)
@@ -229,8 +257,9 @@ class FloatingWindowService : Service() {
         apiServer?.stop()
         apiServer = null
         isServerRunning = false
+        runtimeState = RuntimeState()
         updateFloatingState(false, "Serveur arrêté")
-        updateNotification("API Bridge arrêté")
+        updateNotification("NemApiBridge arrêté")
     }
 
     private fun updateFloatingState(running: Boolean, status: String) {
@@ -245,7 +274,7 @@ class FloatingWindowService : Service() {
     private fun createNotificationChannel(): String {
         val channelId = "api_bridge_service"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "API Bridge", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, "NemApiBridge", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
         return channelId
@@ -253,7 +282,7 @@ class FloatingWindowService : Service() {
 
     private fun buildNotification(text: String): Notification =
         NotificationCompat.Builder(this, createNotificationChannel())
-            .setContentTitle("API Bridge")
+            .setContentTitle("NemApiBridge")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
@@ -268,15 +297,29 @@ class FloatingWindowService : Service() {
         AutomationCoordinator.stopCurrentJob()
         apiServer?.stop()
         apiServer = null
+        isServerRunning = false
+        runtimeState = RuntimeState()
+        if (instance === this) instance = null
         if (::floatingView.isInitialized && floatingView.windowToken != null) {
             windowManager.removeView(floatingView)
         }
         super.onDestroy()
     }
 
+    data class RuntimeState(val running: Boolean = false, val port: Int? = null, val provider: String? = null, val error: String? = null)
+
     companion object {
+        @Volatile private var instance: FloatingWindowService? = null
+        @Volatile private var dashboardVisible = false
+        fun setDashboardVisible(visible: Boolean) {
+            dashboardVisible = visible
+            instance?.applyPanelVisibility()
+        }
+
+        @Volatile var runtimeState = RuntimeState()
+            private set
         private const val TAG = "FloatingWindowService"
         private const val NOTIFICATION_ID = 1
-        private const val DEFAULT_PORT = 8080
+        private const val DEFAULT_PORT = 8090
     }
 }

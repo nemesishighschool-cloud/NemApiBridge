@@ -96,4 +96,57 @@ class ProviderConfigParserTest {
         }
         assertEquals(true, invalidPackageError.message?.contains("package_name"))
     }
+    @Test
+    fun parsesStructuralSelectorsAndSemanticScrolling() {
+        val config = ProviderConfigParser.parse(
+            """
+            {
+              "provider": "DeepSeek", "package_name": "com.deepseek.chat",
+              "selectors": {
+                "input": [{"by": "class_name", "value": "android.widget.EditText"}],
+                "input_activation": [{"by": "text", "value": "Type a message"}],
+                "allow_input_gesture": true,
+                "detect_identical_responses": true,
+                "allow_reconstruction_gesture": true,
+                "send": [{"by": "content_description", "value": "Send"}],
+                "assistant_message": [{"by": "content_description", "value": "Copy", "ancestor_levels": 2, "text_only": true, "reject_clipped": true, "reconstruct_clipped": true}],
+                "scroll_to_end": [{"by": "scrollable", "value": "true"}]
+              }
+            }
+            """.trimIndent()
+        )
+        val answer = config.selectors.assistantMessage.single()
+        assertEquals(2, answer.ancestorLevels)
+        assertEquals(true, answer.textOnly)
+        assertEquals(true, answer.rejectClipped)
+        assertEquals(true, answer.reconstructClipped)
+        assertEquals(true, config.selectors.allowReconstructionGesture)
+        assertEquals("true", config.selectors.scrollToEnd.single().value)
+        assertEquals("Type a message", config.selectors.inputActivation.single().value)
+        assertEquals(true, config.selectors.allowInputGesture)
+        assertEquals(true, config.selectors.detectIdenticalResponses)
+    }
+
+    @Test
+    fun rejectsInvalidStructuralSelectorValues() {
+        val base = ProviderConfig(
+            provider = "test", packageName = "com.example.ai",
+            selectors = ProviderSelectors(
+                input = listOf(UiSelector("class_name", "android.widget.EditText")),
+                send = listOf(UiSelector("text", "Send")),
+                assistantMessage = listOf(UiSelector("text", "Copy", ancestorLevels = 9))
+            )
+        )
+        assertThrows(IllegalArgumentException::class.java) { ProviderConfigParser.validate(base) }
+        val badScroll = base.copy(selectors = base.selectors.copy(
+            assistantMessage = listOf(UiSelector("text", "Copy")),
+            scrollToEnd = listOf(UiSelector("scrollable", "maybe"))
+        ))
+        assertThrows(IllegalArgumentException::class.java) { ProviderConfigParser.validate(badScroll) }
+        val noActivation = base.copy(selectors = base.selectors.copy(
+            assistantMessage = listOf(UiSelector("text", "Copy")), allowInputGesture = true
+        ))
+        assertThrows(IllegalArgumentException::class.java) { ProviderConfigParser.validate(noActivation) }
+    }
+
 }

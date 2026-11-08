@@ -1,288 +1,131 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#F4F6FB"
-    android:fillViewport="true">
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="20dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="API Bridge"
-            android:textColor="#171B2C"
-            android:textSize="28sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="API locale compatible OpenAI, pilotée par les sélecteurs d’accessibilité de tes providers."
-            android:textColor="#69738A"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/txt_service_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:background="#E8EDFF"
-            android:padding="14dp"
-            android:text="Vérification des autorisations…"
-            android:textColor="#364FC7"
-            android:textStyle="bold" />
-
-        <androidx.cardview.widget.CardView
-            android:id="@+id/card_permissions"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Autorisations Android"
-                    android:textColor="#171B2C"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/txt_permission_status"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:textColor="#69738A"
-                    android:textSize="14sp" />
-
-                <Button
-                    android:id="@+id/btn_grant_permissions"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Configurer les autorisations"
-                    android:textAllCaps="false" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Providers"
-                    android:textColor="#171B2C"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/txt_provider_empty"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Importe le JSON d’un provider pour commencer."
-                    android:textColor="#69738A"
-                    android:textSize="13sp"
-                    android:visibility="gone" />
-
-                <Spinner
-                    android:id="@+id/spinner_provider"
-                    android:layout_width="match_parent"
-                    android:layout_height="52dp"
-                    android:layout_marginTop="8dp" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <Button
-                        android:id="@+id/btn_import_provider"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Importer JSON"
-                        android:textAllCaps="false" />
-
-                    <Button
-                        android:id="@+id/btn_delete_provider"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="Supprimer"
-                        android:textAllCaps="false" />
-                </LinearLayout>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Serveur OpenAI local"
-                    android:textColor="#171B2C"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Port HTTP"
-                    android:textColor="#69738A"
-                    android:textSize="12sp" />
-
-                <EditText
-                    android:id="@+id/edt_port"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="number"
-                    android:maxLength="5"
-                    android:text="8080" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Adresse locale"
-                    android:textColor="#69738A"
-                    android:textSize="12sp" />
-
-                <TextView
-                    android:id="@+id/txt_server_address"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:paddingVertical="8dp"
-                    android:text="http://127.0.0.1:8080"
-                    android:textColor="#364FC7"
-                    android:textIsSelectable="true"
-                    android:textStyle="bold" />
-
-                <Button
-                    android:id="@+id/btn_start_server"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Démarrer le service"
-                    android:textAllCaps="false" />
-
-                <Button
-                    android:id="@+id/btn_stop_server"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="Arrêter le serveur"
-                    android:textAllCaps="false" />
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
-
-        <androidx.cardview.widget.CardView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:layout_marginBottom="24dp"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="2dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="18dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Sécurité API"
-                    android:textColor="#171B2C"
-                    android:textSize="17sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="Toutes les requêtes locales nécessitent cette clé Bearer. Elle est chiffrée avec Android Keystore."
-                    android:textColor="#69738A"
-                    android:textSize="13sp" />
-
-                <EditText
-                    android:id="@+id/edt_api_key"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:inputType="textPassword"
-                    android:singleLine="true"
-                    android:textIsSelectable="true" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-
-                    <Button
-                        android:id="@+id/btn_toggle_api_key"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Afficher"
-                        android:textAllCaps="false" />
-
-                    <Button
-                        android:id="@+id/btn_copy_api_key"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
-                        android:layout_weight="1"
-                        android:text="Copier"
-                        android:textAllCaps="false" />
-
-                    <Button
-                        android:id="@+id/btn_rotate_api_key"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
-                        android:layout_weight="1"
-                        android:text="Renouveler"
-                        android:textAllCaps="false" />
-                </LinearLayout>
-            </LinearLayout>
-        </androidx.cardview.widget.CardView>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@color/nem_background" android:importantForAutofill="noExcludeDescendants">
+  <LinearLayout android:layout_width="match_parent" android:layout_height="68dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="20dp" android:paddingEnd="20dp">
+    <ImageView android:layout_width="42dp" android:layout_height="42dp" android:src="@drawable/nem_logo" android:contentDescription="Logo NemApiBridge"/>
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="11dp" android:orientation="vertical">
+      <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="NemApiBridge" android:textColor="@color/nem_text" android:textStyle="bold" android:textSize="17sp"/>
+      <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="VOTRE PASSERELLE IA" android:textColor="@color/nem_teal" android:letterSpacing="0.12" android:textSize="9sp"/>
     </LinearLayout>
-</ScrollView>
+    <TextView android:id="@+id/txt_header_status" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/nem_chip" android:paddingHorizontal="11dp" android:paddingVertical="7dp" android:text="●  ARRÊTÉ" android:textColor="@color/nem_teal" android:textStyle="bold" android:textSize="10sp"/>
+  </LinearLayout>
+  <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+    <ScrollView android:id="@+id/page_dashboard" android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true" android:clipToPadding="false">
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="20dp" android:paddingEnd="20dp" android:paddingBottom="28dp">
+        <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="ESPACE DE CONTRÔLE  /  01" android:textColor="@color/nem_teal"/>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Votre IA,
+connectée." android:textColor="@color/nem_text" android:textStyle="bold" android:textSize="31sp" android:lineSpacingExtra="-2dp"/>
+        <TextView style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:text="Une passerelle locale entre vos outils et vos applications IA."/>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:background="@drawable/nem_hero" android:orientation="vertical" android:padding="19dp">
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="SERVEUR LOCAL" android:textColor="#8BC5C2" android:textStyle="bold" android:letterSpacing="0.1" android:textSize="10sp"/>
+            <TextView android:id="@+id/txt_home_badge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/nem_chip" android:paddingHorizontal="9dp" android:paddingVertical="5dp" android:text="HORS LIGNE" android:textColor="@color/nem_teal" android:textStyle="bold" android:textSize="10sp"/>
+          </LinearLayout>
+          <TextView android:id="@+id/txt_home_server" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="11dp" android:text="Serveur arrêté" android:textColor="@color/nem_text" android:textStyle="bold" android:textSize="22sp"/>
+          <TextView android:id="@+id/txt_home_detail" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:text="Démarrez la passerelle pour ouvrir le panneau flottant." android:textColor="#A8C8CB"/>
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="17dp" android:orientation="horizontal">
+            <Button android:id="@+id/btn_start_server" style="@style/NemPrimary" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:text="Démarrer et ouvrir"/>
+            <Button android:id="@+id/btn_stop_server" style="@style/NemSecondary" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="Arrêter"/>
+          </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:background="@drawable/nem_card" android:orientation="vertical" android:padding="17dp">
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+              <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PROVIDER ACTIF"/>
+              <TextView android:id="@+id/txt_active_provider" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:text="Aucun provider" android:textColor="@color/nem_text" android:textSize="17sp" android:textStyle="bold"/>
+            </LinearLayout>
+            <Button android:id="@+id/btn_manage_providers" style="@style/NemSecondary" android:layout_width="wrap_content" android:layout_height="42dp" android:text="Gérer"/>
+          </LinearLayout>
+          <TextView android:id="@+id/txt_provider_package_home" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:text="Importez une configuration JSON."/>
+          <Button android:id="@+id/btn_open_target" style="@style/NemSecondary" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="13dp" android:text="Ouvrir l’application cible  ↗"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:background="@drawable/nem_card" android:orientation="vertical" android:padding="17dp">
+          <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="ADRESSE API CONFIGURÉE"/>
+          <TextView android:id="@+id/txt_home_url" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:text="http://127.0.0.1:8090/v1" android:textColor="@color/nem_teal" android:textStyle="bold" android:textIsSelectable="true" android:textSize="15sp"/>
+          <TextView style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:text="Compatible OpenAI · clé facultative dans les réglages"/>
+          <Button android:id="@+id/btn_copy_url" style="@style/NemSecondary" android:layout_width="wrap_content" android:layout_height="42dp" android:layout_marginTop="10dp" android:text="Copier l’URL"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:background="@drawable/nem_card" android:orientation="vertical" android:padding="17dp">
+          <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="VÉRIFICATIONS"/>
+          <TextView android:id="@+id/txt_service_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="Accessibilité : vérification…" android:textColor="@color/nem_text" android:textStyle="bold" android:textSize="13sp"/>
+          <TextView android:id="@+id/txt_overlay_status" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:text="Panneau flottant : vérification…"/>
+          <Button android:id="@+id/btn_go_settings" style="@style/NemSecondary" android:layout_width="wrap_content" android:layout_height="42dp" android:layout_marginTop="10dp" android:text="Voir les réglages"/>
+        </LinearLayout>
+      </LinearLayout>
+    </ScrollView>
+    <ScrollView android:id="@+id/page_providers" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" android:fillViewport="true">
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingHorizontal="20dp" android:paddingBottom="28dp">
+        <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="CONFIGURATION  /  02" android:textColor="@color/nem_teal"/>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Vos providers." android:textColor="@color/nem_text" android:textStyle="bold" android:textSize="29sp"/>
+        <TextView style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Choisissez l’application IA que la passerelle doit piloter."/>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:background="@drawable/nem_card" android:orientation="vertical" android:padding="18dp">
+          <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PROVIDER SÉLECTIONNÉ"/>
+          <TextView android:id="@+id/txt_provider_empty" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Importez un fichier JSON pour commencer." android:visibility="gone"/>
+          <Spinner android:id="@+id/spinner_provider" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="9dp" android:background="@drawable/nem_input" android:paddingHorizontal="12dp"/>
+          <TextView android:id="@+id/txt_provider_package" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="9dp" android:text="Aucune application configurée."/>
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:orientation="horizontal">
+            <Button android:id="@+id/btn_import_provider" style="@style/NemPrimary" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:text="Importer JSON"/>
+            <Button android:id="@+id/btn_delete_provider" style="@style/NemSecondary" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="Supprimer"/>
+          </LinearLayout>
+          <TextView android:id="@+id/txt_provider_count" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="0 provider"/>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:background="@drawable/nem_hero" android:orientation="vertical" android:padding="18dp">
+          <TextView style="@style/NemTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Comment ça marche ?" android:textSize="16sp"/>
+          <TextView style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="01  Importez le JSON du provider.
+02  Connectez-vous à l’application cible.
+03  Démarrez la passerelle et ouvrez l’app." android:textColor="#B2CFD1"/>
+        </LinearLayout>
+      </LinearLayout>
+    </ScrollView>
+    <ScrollView android:id="@+id/page_settings" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone" android:fillViewport="true">
+      <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingHorizontal="20dp" android:paddingBottom="28dp">
+        <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="PRÉFÉRENCES  /  03" android:textColor="@color/nem_teal"/>
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Réglages." android:textColor="@color/nem_text" android:textStyle="bold" android:textSize="29sp"/>
+        <TextView style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Connexion, sécurité et autorisations au même endroit."/>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:background="@drawable/nem_card" android:orientation="vertical" android:padding="18dp">
+          <TextView style="@style/NemTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Connexion API" android:textSize="17sp"/>
+          <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="PORT HTTP"/>
+          <EditText android:id="@+id/edt_port" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="7dp" android:background="@drawable/nem_input" android:paddingHorizontal="13dp" android:inputType="number" android:maxLength="5" android:text="8090" android:textColor="@color/nem_text" android:textColorHint="@color/nem_muted" android:textSize="15sp"/>
+          <TextView android:id="@+id/txt_running_lock_hint" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Modifiable quand le serveur est arrêté."/>
+          <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="15dp" android:text="BASE URL · RÉSEAU DE L’APPAREIL"/>
+          <TextView android:id="@+id/txt_server_address" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="7dp" android:text="http://127.0.0.1:8090/v1" android:textColor="@color/nem_teal" android:textIsSelectable="true" android:textSize="14sp" android:textStyle="bold"/>
+          <TextView style="@style/NemLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:text="USB · SUR LE PC"/>
+          <TextView android:id="@+id/txt_usb_address" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:textColor="@color/nem_teal" android:textIsSelectable="true"/>
+          <TextView android:id="@+id/txt_web_address" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="9dp" android:textColor="@color/nem_teal" android:textIsSelectable="true"/>
+          <TextView android:id="@+id/txt_adb_command" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:textIsSelectable="true"/>
+          <TextView style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Wi-Fi : même réseau local. USB : activez le débogage USB puis exécutez la commande ADB sur le PC."/>
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical"><TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Streaming simulé" android:textColor="@color/nem_text" android:textStyle="bold"/><TextView style="@style/NemBody" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Après lecture complète"/></LinearLayout>
+            <androidx.appcompat.widget.SwitchCompat android:id="@+id/switch_streaming" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="Activer le streaming simulé" app:thumbTint="@color/nem_teal"/>
+          </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:background="@drawable/nem_card" android:orientation="vertical" android:padding="18dp">
+          <TextView style="@style/NemTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Clé API" android:textSize="17sp"/>
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+              <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Exiger une clé pour l’API" android:textColor="@color/nem_text" android:textStyle="bold"/>
+              <TextView style="@style/NemBody" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Facultatif · modifiable à tout moment"/>
+            </LinearLayout>
+            <androidx.appcompat.widget.SwitchCompat android:id="@+id/switch_api_key_required" android:layout_width="wrap_content" android:layout_height="wrap_content" android:contentDescription="Exiger une clé API" app:thumbTint="@color/nem_teal"/>
+          </LinearLayout>
+          <TextView style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="9dp" android:text="Attention : le chat et l’administration web restent ouverts sur le réseau local, même si la clé API est activée. HTTP ne chiffre pas les échanges."/>
+          <EditText android:id="@+id/edt_api_key" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="12dp" android:background="@drawable/nem_input" android:paddingHorizontal="13dp" android:inputType="textPassword" android:singleLine="true" android:focusable="false" android:textColor="@color/nem_text" android:textSize="14sp"/>
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:orientation="horizontal">
+            <Button android:id="@+id/btn_toggle_api_key" style="@style/NemSecondary" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:text="Afficher"/>
+            <Button android:id="@+id/btn_copy_api_key" style="@style/NemSecondary" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:layout_marginStart="7dp" android:text="Copier"/>
+            <Button android:id="@+id/btn_rotate_api_key" style="@style/NemSecondary" android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:layout_marginStart="7dp" android:text="Renouveler"/>
+          </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/card_permissions" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:background="@drawable/nem_card" android:orientation="vertical" android:padding="18dp">
+          <TextView style="@style/NemTitle" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Autorisations" android:textSize="17sp"/>
+          <TextView android:id="@+id/txt_permission_status" style="@style/NemBody" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="9dp" android:text="Vérification…"/>
+          <Button android:id="@+id/btn_grant_permissions" style="@style/NemSecondary" android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="12dp" android:text="Configurer les autorisations"/>
+        </LinearLayout>
+      </LinearLayout>
+    </ScrollView>
+  </FrameLayout>
+  <LinearLayout android:layout_width="match_parent" android:layout_height="68dp" android:orientation="horizontal" android:gravity="center" android:background="#0D1A29" android:paddingHorizontal="14dp" android:paddingVertical="8dp">
+    <Button android:id="@+id/nav_dashboard" style="@style/NemNav" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="◉  Accueil"/>
+    <Button android:id="@+id/nav_providers" style="@style/NemNav" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="◇  Providers"/>
+    <Button android:id="@+id/nav_settings" style="@style/NemNav" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="⚙  Réglages"/>
+  </LinearLayout>
+</LinearLayout>

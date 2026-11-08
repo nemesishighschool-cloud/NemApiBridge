@@ -3,6 +3,7 @@ package com.ialocalbridge
 import android.content.Context
 import android.util.Log
 import com.ialocalbridge.utils.FileUploader
+import com.ialocalbridge.utils.NetworkHelper
 import com.ialocalbridge.utils.ToolParser
 import com.ialocalbridge.utils.WebInterface
 import fi.iki.elonen.NanoHTTPD
@@ -45,12 +46,13 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         if (session.method == Method.OPTIONS) {
             return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "").also(::addCORSHeaders)
         }
-        if (uri == "/" || uri == "/index.html") {
-            return newFixedLengthResponse(
-                Response.Status.OK,
-                MIME_HTML,
-                WebInterface.getHtml()
-            ).also(::addCORSHeaders)
+        if (session.method == Method.GET && uri in setOf("/", "/index.html", "/chat", "/admin")) {
+            return newFixedLengthResponse(Response.Status.OK, MIME_HTML, WebInterface.getHtml(appContext))
+                .also(::addCORSHeaders)
+        }
+        if (session.method == Method.GET && uri == "/web/logo.png") {
+            return newChunkedResponse(Response.Status.OK, "image/png", appContext.assets.open("www/logo.png"))
+                .also(::addCORSHeaders)
         }
         if (uri == "/health" && session.method == Method.GET) {
             val health = JSONObject()
@@ -58,13 +60,22 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                 .put("uptime_seconds", uptimeSeconds())
             return newFixedLengthResponse(Response.Status.OK, MIME_JSON, health.toString()).also(::addCORSHeaders)
         }
-        if (!authorized(session)) {
+        // Browser dashboard and chat are intentionally open on the local network.
+        // API Bearer protection, when enabled, applies only to the API routes.
+        if (!uri.startsWith("/web/") && !authorized(session)) {
             return jsonError(Response.Status.UNAUTHORIZED, "authentication_error", "Clé API absente ou invalide.")
                 .also(::addCORSHeaders)
         }
 
         val response = try {
             when (uri) {
+                "/web/models" -> if (session.method == Method.GET) handleModelsRequest() else methodNotAllowed("GET")
+                "/web/status" -> if (session.method == Method.GET) handleStatusRequest() else methodNotAllowed("GET")
+                "/web/stats" -> if (session.method == Method.GET) handleStatsRequest() else methodNotAllowed("GET")
+                "/web/network" -> if (session.method == Method.GET) handleNetworkRequest() else methodNotAllowed("GET")
+                "/web/config" -> handleConfigRequest(session)
+                "/web/chat" -> if (session.method == Method.POST) handleChatCompletions(session) else methodNotAllowed("POST")
+                "/web/stop" -> if (session.method == Method.POST) handleStopRequest() else methodNotAllowed("POST")
                 "/v1/models" -> if (session.method == Method.GET) handleModelsRequest()
                     else methodNotAllowed("GET")
                 "/v1/chat/completions" -> if (session.method == Method.POST) handleChatCompletions(session)
@@ -86,7 +97,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             val status = when (e.errorCode) {
                 "queue_full", "queue_timeout" -> Response.Status.SERVICE_UNAVAILABLE
                 "accessibility_disabled", "wrong_app", "selector_missing", "selector_ambiguous",
-                "action_failed", "response_timeout", "cancelled" -> Response.Status.CONFLICT
+                "action_failed", "response_timeout", "response_incomplete", "user_intervention_required", "cancelled" -> Response.Status.CONFLICT
                 "response_too_large" -> Response.Status.PAYLOAD_TOO_LARGE
                 else -> Response.Status.BAD_REQUEST
             }
@@ -458,11 +469,25 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         }
         val config = JSONObject()
             .put("stream_enabled", streamEnabled)
+            .put("api_key_required", apiKeyRequired())
             .put("active_provider", providerRepository.getActiveName() ?: JSONObject.NULL)
             .put("providers", JSONArray().apply {
                 providerRepository.getAll().forEach { put(it.provider) }
             })
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON, config.toString())
+    }
+
+    private fun handleNetworkRequest(): Response {
+        val wifi = NetworkHelper.getWifiIPAddress(appContext)
+        val obj = JSONObject()
+            .put("port", port)
+            .put("wifi_ipv4", wifi ?: JSONObject.NULL)
+            .put("wifi_api", wifi?.let { "http://$it:$port/v1" } ?: JSONObject.NULL)
+            .put("wifi_web", wifi?.let { "http://$it:$port/" } ?: JSONObject.NULL)
+            .put("usb_api", "http://127.0.0.1:$port/v1")
+            .put("usb_web", "http://127.0.0.1:$port/")
+            .put("adb_command", "adb forward tcp:$port tcp:$port")
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, obj.toString())
     }
 
     private fun handleAskRequest(session: IHTTPSession): Response {
@@ -535,7 +560,12 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         }
     }
 
+    private fun apiKeyRequired(): Boolean = appContext
+        .getSharedPreferences(SETTINGS_PREFERENCES, Context.MODE_PRIVATE)
+        .getBoolean(API_KEY_REQUIRED_KEY, false)
+
     private fun authorized(session: IHTTPSession): Boolean {
+        if (!apiKeyRequired()) return true
         val expected = apiKeyStore.get()
             ?: throw IllegalStateException("La clé API locale n’est pas configurée.")
         val authorization = session.headers.entries
@@ -592,6 +622,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         private const val TAG = "LocalApiServer"
         private const val SETTINGS_PREFERENCES = "server_settings"
         private const val STREAM_ENABLED_KEY = "stream_enabled"
+        private const val API_KEY_REQUIRED_KEY = "api_key_required"
         private const val MAX_REQUEST_CHARS = 512 * 1024
         private const val MAX_UPLOAD_BYTES = 20L * 1024 * 1024
         private const val MAX_FILENAME_LENGTH = 180

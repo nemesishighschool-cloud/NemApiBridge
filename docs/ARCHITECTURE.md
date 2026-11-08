@@ -1,4 +1,4 @@
-# API Bridge — Architecture cible
+# NemApiBridge — Architecture
 
 **Version :** 3.0
 **Statut :** architecture de référence; l’état réellement implémenté et les validations sont indiqués ci-dessous
@@ -9,9 +9,9 @@
 
 API Bridge expose une application Android d’IA sous la forme d’un serveur HTTP compatible avec les requêtes de conversation OpenAI. Le serveur, l’automatisation et la lecture de la réponse s’exécutent sur le téléphone où l’application cible est installée.
 
-Le pilotage repose sur l’inspection de l’arbre d’accessibilité Android et sur les actions sémantiques des éléments trouvés. L’automatisation repère le champ de saisie, les boutons et le contenu de réponse à partir de leurs identifiants de ressource, descriptions, libellés, classes et relations dans l’arbre. Elle ne requiert ni coordonnées enregistrées ni calibration visuelle.
+Le pilotage repose sur l’inspection de l’arbre d’accessibilité Android et privilégie les actions sémantiques des éléments trouvés. L’automatisation repère le champ de saisie, les boutons et le contenu de réponse à partir de leurs identifiants de ressource, descriptions, libellés, classes et relations dans l’arbre. Elle ne requiert ni coordonnées enregistrées ni calibration visuelle. En cas d’action sémantique indisponible, un provider peut explicitement autoriser un geste calculé depuis les limites du nœud courant ; ce mode est désactivé par défaut.
 
-Les sélecteurs propres à une application sont importés dans un provider JSON. Aucun provider d’application n’est livré avec des sélecteurs supposés valides : ils doivent être relevés sur la version réellement installée.
+Les sélecteurs propres à une application sont importés dans un provider JSON. Les sélecteurs doivent être relevés sur la version réellement installée. Un adaptateur expérimental DeepSeek figure dans `providers/` avec ses limites documentées ; il ne garantit pas l’automatisation complète.
 
 ## 2. Principes et contraintes
 
@@ -19,11 +19,11 @@ Les sélecteurs propres à une application sont importés dans un provider JSON.
 |---|---|
 | Exécution | Sur le téléphone Android de l’utilisateur |
 | Interface cible | Application installée normalement et ouverte sur le téléphone |
-| Pilotage | `AccessibilityService`, arbre d’interface et actions sur les nœuds |
+| Pilotage | `AccessibilityService`, arbre d’interface, actions sur les nœuds ; gestes dynamiques seulement si activés explicitement par le provider |
 | Position à l’écran | Pas de coordonnées configurées ou calibrées |
 | Intervention utilisateur | Activation du service d’accessibilité et connexion à l’application par l’utilisateur |
 | Serveur | HTTP local compatible OpenAI |
-| Accès réseau | Réseau local uniquement, avec authentification Bearer |
+| Accès réseau | Réseau local seulement ; Bearer facultatif pour l’API ; interface web toujours ouverte |
 | Charge UI | Une opération active et une en attente au maximum par appareil |
 | Streaming | SSE simulé après lecture de la réponse complète |
 | Adaptation | Configuration JSON importée par l’utilisateur |
@@ -35,12 +35,12 @@ Un service d’accessibilité Android doit être activé volontairement par l’
 
 ```text
 Client compatible OpenAI
-        │ HTTP + Authorization: Bearer
+        │ HTTP + Bearer facultatif pour l’API
         ▼
 API Bridge sur le téléphone
 ┌───────────────────────────────────────────────┐
 │ Serveur HTTP et interface d’administration    │
-│ Authentification, endpoints, SSE, statistiques│
+│ Clé facultative, endpoints, SSE, statistiques│
 ├───────────────────────────────────────────────┤
 │ Couche de requête                             │
 │ Validation, historique, file bornée            │
@@ -74,17 +74,17 @@ Le serveur Android conserve l’API et les capacités générales d’API Bridge
 | `GET/POST` | `/stop` | Demande d’arrêt de l’opération active, si l’application cible le permet; `GET` reste accepté pour compatibilité |
 | `GET` | `/` | Interface d’administration locale |
 
-Toutes les routes de contrôle et de données, à l’exception de `GET /health`, sont protégées par `Authorization: Bearer <clé>`. `/` sert uniquement la coquille statique du tableau de bord; ses appels de données sont authentifiés côté navigateur. La clé est créée localement, chiffrée avec une clé Android Keystore et affichée dans la configuration Android.
+La protection `Authorization: Bearer <clé>` est facultative et désactivée par défaut. Quand elle est activée dans les réglages Android, elle protège les routes API hors `/health`, mais **ne protège jamais** le tableau de bord, le chat ni les routes `/web/*`. Ces routes web ouvertes permettent notamment de lancer des requêtes et de modifier le provider actif ou le streaming ; la protection de l’API ne constitue donc pas une protection globale contre l’usage du serveur. La clé est créée localement et chiffrée avec Android Keystore. L’option est consultée pour chaque requête et s’applique sans redémarrage.
 
-Le serveur écoute sur les interfaces IPv4 mais refuse les connexions dont l’adresse cliente n’est ni loopback, ni privée, ni link-local. Il n’est pas destiné à être exposé directement sur Internet. Le tableau de bord n’affiche aucune donnée avant authentification.
+Le serveur écoute sur les interfaces IPv4 mais refuse les connexions dont l’adresse cliente n’est ni loopback, ni privée, ni link-local. Il n’est pas destiné à être exposé directement sur Internet. Il est ouvert aux autres appareils du réseau local ; le navigateur peut servir le chat et l’administration sans clé. Le port par défaut est 8090, une valeur déjà enregistrée reste inchangée lors d’une mise à jour.
 
-Le transport demeure HTTP sans TLS : l’authentification protège l’accès mais ne chiffre pas la clé ou les échanges sur le réseau. Utiliser uniquement un réseau de confiance ou ADB reverse.
+Le transport demeure HTTP sans TLS : même avec une clé, les échanges ne sont pas chiffrés. Utiliser uniquement un réseau de confiance ou la redirection USB `adb forward tcp:8090 tcp:8090` exécutée sur le PC. Les adresses Wi-Fi, USB et les commandes s’affichent dans l’application et l’interface web.
 
 ### 4.2 Couche de requête et sessions
 
 La requête OpenAI est validée avant toute action UI. Le serveur :
 
-1. Vérifie le Bearer token, le modèle, le corps et la liste `messages`.
+1. Vérifie le Bearer token si l’option API est activée, puis le modèle, le corps et la liste `messages`. Les requêtes du chat web sont volontairement sans clé.
 2. Refuse les contenus et formats non pris en charge avec une erreur JSON explicite.
 3. Sérialise le travail dans une file à un seul consommateur.
 4. Formate l’historique fourni en messages lisibles (`[Utilisateur]`, `[Assistant]`, etc.) lorsque l’adaptateur demande un rejeu.
@@ -154,7 +154,7 @@ L’exécuteur reçoit une requête normalisée et déroule un scénario fini :
 7. Lire le texte de la réponse depuis les nœuds accessibles du message assistant.
 8. Vérifier que le texte appartient bien à la nouvelle réponse, puis le transmettre au serveur.
 
-L’exécuteur privilégie, dans l’ordre importé, les identifiants de ressource, descriptions, textes ou classes. Les contrôles d’entrée et d’envoi doivent correspondre à un seul nœud; une réponse peut correspondre à plusieurs nœuds, auquel cas le dernier est lu. Une correspondance absente ou ambiguë produit une erreur diagnostiquable. Il ne choisit pas arbitrairement un contrôle et ne simule pas de tap à une position d’écran comme solution de repli.
+L’exécuteur privilégie, dans l’ordre importé, les identifiants de ressource, descriptions, textes ou classes. Les contrôles d’entrée et d’envoi doivent correspondre à un seul nœud; une réponse peut correspondre à plusieurs nœuds, auquel cas le dernier est lu. Une correspondance absente ou ambiguë produit une erreur diagnostiquable. Il ne choisit pas arbitrairement un contrôle. Pour les providers qui l’activent explicitement, un geste de secours est calculé depuis un nœud unique et visible ; aucune position d’écran n’est enregistrée.
 
 La détection de fin relit la réponse accessible et, si configuré, l’indicateur de génération. Le résultat doit être nouveau et stable pendant le nombre de lectures configuré; une réponse vide ou un simple délai sans résultat n’est pas transformé en succès.
 
@@ -180,7 +180,7 @@ L’interface Android permet de :
 - importer, nommer, sélectionner et supprimer des providers JSON;
 - inspecter l’interface cible et copier les sélecteurs détectés.
 
-Le tableau de bord web sert les statistiques, modèles, test rapide et configuration du streaming après saisie de la clé dans la session du navigateur. La configuration ne propose pas de zones de tap ou de calibration de coordonnées.
+Le tableau de bord web ouvert présente les statistiques, les providers, les adresses Wi-Fi/USB et la configuration du streaming. Le chat sans clé sélectionne un provider et envoie une conversation à `/web/chat`. Il n’ouvre pas automatiquement l’application cible : l’utilisateur doit la mettre au premier plan sur le téléphone. Les messages du navigateur restent dans l’onglet, mais sont bien transmis à l’application cible. La configuration ne propose pas de zones de tap ou de calibration de coordonnées.
 
 ## 5. Contrat API OpenAI
 
@@ -220,7 +220,7 @@ Aucun de ces cas ne doit être transformé en une réponse assistant ressemblant
 
 ## 7. Sécurité et confidentialité
 
-- Exiger un Bearer token aléatoire sur les endpoints de données et d’administration.
+- La clé Bearer pour les routes API est facultative, désactivée par défaut et activable depuis Android. Les routes web restent ouvertes même lorsque la clé est activée : tous les appareils capables de joindre le téléphone peuvent utiliser le chat et l’administration. Limiter impérativement l’usage à un réseau de confiance, sans exposition publique.
 - Stocker la clé et les paramètres sensibles dans un stockage Android adapté.
 - Limiter l’écoute au réseau local et documenter les règles de pare-feu du téléphone.
 - Éviter les journaux de prompts, réponses, contenu du presse-papiers et données de compte.
@@ -267,14 +267,14 @@ Les providers importés et la clé sont stockés dans les préférences privées
 
 | Priorité | Travail | État |
 |---|---|---|
-| P0 | Inspecter l’arbre d’accessibilité | Inspecteur intégré; sélecteurs d’une application réelle à vérifier sur appareil |
+| P0 | Inspecter l’arbre d’accessibilité | Inspecteur intégré ; DeepSeek 2.7.5 relevé sur émulateur |
 | P1 | Importer et valider des providers JSON | Implémenté; validation unitaire du contrat |
-| P2 | Envoyer, attendre et lire via les nœuds UI | Implémenté; validation avec une application cible réelle encore requise |
+| P2 | Envoyer, attendre et lire via les nœuds UI | Échanges DeepSeek courts et longs validés sur émulateur ; limites documentées |
 | P3 | File bornée et états d’erreur | Implémenté; au plus une requête active et une en attente |
-| P4 | Serveur OpenAI local authentifié | Implémenté; compilation et tests unitaires réussis dans GitHub Actions |
+| P4 | Serveur OpenAI local avec clé facultative | Implémenté; compilation et tests unitaires réussis dans GitHub Actions |
 | P5 | Streaming SSE simulé | Implémenté; test sur client OpenAI à réaliser |
 | P6 | Historique texte et tool calls | Implémenté; limites multimodales documentées |
 | P7 | Interface Android et tableau de bord | Implémenté; test ergonomique sur téléphone à réaliser |
 | P8 | Uploads et providers supplémentaires | Upload existant conservé; adaptations propres à chaque app restent à configurer |
 
-La compilation locale de cette session est bloquée avant la résolution du projet : le JDK présent est 25, incompatible avec le Gradle 8.0 du dépôt. Le workflow GitHub Actions a réussi `testDebugUnitTest` et `assembleDebug` pour le commit `d215246` ([run 42380116782](https://github.com/teteekoue/api_bridge/actions/runs/42380116782)). Aucun émulateur ou conteneur Android n’a été créé. L’automatisation réelle ne peut être déclarée validée qu’après essai sur un téléphone et une application disposant des sélecteurs correspondants.
+Validation sur émulateur Android 13 : `testDebugUnitTest` et `assembleDebug` réussissent avec JDK 17. Des échanges courts consécutifs et des réponses longues mono-nœud et multi-blocs avec DeepSeek Android 2.7.5 ont réussi via `/v1/chat/completions`. Le champ au repos ne fournit pas de clic accessible ; l’adaptateur active donc explicitement un geste calculé depuis ses limites. La reconstruction des réponses longues refuse les cas ambigus mais ne constitue pas une garantie générale ; voir `providers/README.md`. Les tests sur téléphone physique restent à effectuer.

@@ -2,6 +2,11 @@ package com.ialocalbridge
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.graphics.Rect
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -85,15 +90,136 @@ class ClickAccessibilityService : AccessibilityService() {
         }
     }
 
-    fun readLatestText(packageName: String, selectors: List<UiSelector>, label: String): String {
-        val node = findLatestNode(packageName, selectors, label)
-        return try {
-            val text = StringBuilder()
-            appendNodeText(node, text)
-            text.toString().trim()
-        } finally {
-            node.recycle()
+    fun latestResponseContainer(packageName: String, selectors: List<UiSelector>, label: String): Pair<AccessibilityNodeInfo, UiSelector> {
+        for (selector in selectors) {
+            val anchor = try {
+                findLatestNode(packageName, listOf(selector), label)
+            } catch (e: AutomationException) {
+                if (e.errorCode == "selector_missing") continue else throw e
+            }
+            var node = anchor
+            try {
+                repeat(selector.ancestorLevels) {
+                    val parent = node.parent ?: throw AutomationException("selector_missing", "Le conteneur parent de $label est introuvable.")
+                    node.recycle()
+                    node = parent
+                }
+                return node to selector
+            } catch (e: Exception) {
+                node.recycle()
+                throw e
+            }
         }
+        throw AutomationException("selector_missing", "Aucun élément '$label' ne correspond aux sélecteurs du provider.")
+    }
+
+    fun readLatestText(packageName: String, selectors: List<UiSelector>, label: String, requireComplete: Boolean = false): String {
+        val (node, selector) = latestResponseContainer(packageName, selectors, label)
+        return try {
+            if (requireComplete && selector.rejectClipped && isClippedAtScrollStart(node)) {
+                throw AutomationException("response_incomplete", "Le début de la réponse est hors de la zone accessible ; lecture complète impossible.")
+            }
+            val text = StringBuilder()
+            appendNodeText(node, text, selector.textOnly)
+            text.toString().trim()
+        } finally { node.recycle() }
+    }
+
+    fun responseTextParts(node: AccessibilityNodeInfo): List<String> {
+        val result = mutableListOf<String>()
+        fun collect(current: AccessibilityNodeInfo) {
+            current.text?.toString()?.takeIf(String::isNotBlank)?.let { result.add(it) }
+            if (result.sumOf { it.length } > MAX_RESPONSE_TEXT_CHARS) throw AutomationException("response_too_large", "La réponse dépasse la limite de lecture.")
+            for (index in 0 until current.childCount) {
+                val child = current.getChild(index) ?: continue
+                try { collect(child) } finally { child.recycle() }
+            }
+        }
+        collect(node)
+        return result
+    }
+
+    /** Return a retained node only when exactly one text-bearing node exists. */
+    fun findSingleTextNode(container: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var found: AccessibilityNodeInfo? = null
+        var count = 0
+        fun visit(node: AccessibilityNodeInfo) {
+            if (!node.text.isNullOrBlank()) {
+                count++
+                if (count == 1) found = AccessibilityNodeInfo.obtain(node)
+            }
+            if (count > 1) return
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                try { visit(child) } finally { child.recycle() }
+                if (count > 1) break
+            }
+        }
+        visit(container)
+        if (count != 1) { found?.recycle(); return null }
+        return found
+    }
+
+    fun isClippedAtScrollStart(node: AccessibilityNodeInfo): Boolean {
+        val messageBounds = android.graphics.Rect()
+        node.getBoundsInScreen(messageBounds)
+        var parent = node.parent
+        while (parent != null) {
+            val current = parent
+            try {
+                if (current.isScrollable) {
+                    val scrollBounds = android.graphics.Rect()
+                    current.getBoundsInScreen(scrollBounds)
+                    return messageBounds.top <= scrollBounds.top
+                }
+                parent = current.parent
+            } finally { current.recycle() }
+        }
+        // A configured clipping check must fail closed if its scroll container is unavailable.
+        throw AutomationException("response_incomplete", "Conteneur défilant introuvable pour vérifier la réponse.")
+    }
+
+    fun scrollForward(packageName: String, selectors: List<UiSelector>): Boolean =
+        scroll(packageName, selectors, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+
+    fun scrollBackward(packageName: String, selectors: List<UiSelector>): Boolean =
+        scroll(packageName, selectors, AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+
+    private fun scroll(packageName: String, selectors: List<UiSelector>, action: Int): Boolean {
+        if (selectors.isEmpty()) return false
+        val node = findUniqueNode(packageName, selectors, "scroll_to_end")
+        return try {
+            if (!node.isScrollable || !node.isEnabled) throw AutomationException("action_failed", "La zone de conversation ne peut pas défiler.")
+            node.performAction(action)
+        } finally { node.recycle() }
+    }
+
+    class ResponseBaseline(val answer: AccessibilityNodeInfo?, val prompt: AccessibilityNodeInfo?) {
+        fun recycle() { answer?.recycle(); prompt?.recycle() }
+    }
+
+    fun responseBaseline(packageName: String, answerSelectors: List<UiSelector>, prompt: String): ResponseBaseline {
+        val answer = try { findLatestNode(packageName, answerSelectors, "assistant_message") }
+            catch (e: AutomationException) { if (e.errorCode == "selector_missing") null else throw e }
+        return try {
+            val input = try { findLatestNode(packageName, listOf(UiSelector("text", prompt)), "user_message") }
+                catch (e: AutomationException) { if (e.errorCode == "selector_missing") null else throw e }
+            ResponseBaseline(answer, input)
+        } catch (e: Exception) { answer?.recycle(); throw e }
+    }
+
+    fun hasNewAnswerAfterPrompt(packageName: String, answerSelectors: List<UiSelector>, prompt: String, baseline: ResponseBaseline): Boolean {
+        val nodes = readTree(packageName)
+        return try {
+            val promptIndex = nodes.indexOfLast { it.isVisibleToUser && it.text?.toString() == prompt }
+            if (promptIndex < 0 || (baseline.prompt != null && nodes[promptIndex] == baseline.prompt)) return false
+            var answerIndex = -1
+            for (selector in answerSelectors) {
+                answerIndex = nodes.indexOfLast { matches(it, selector) }
+                if (answerIndex >= 0) break
+            }
+            answerIndex > promptIndex && (baseline.answer == null || nodes[answerIndex] != baseline.answer)
+        } finally { nodes.forEach { it.recycle() } }
     }
 
     fun inspectAccessibleElements(packageName: String, limit: Int = 150): List<AccessibleElement> {
@@ -122,8 +248,87 @@ class ClickAccessibilityService : AccessibilityService() {
     }
 
     fun click(node: AccessibilityNodeInfo, label: String) {
-        if (!node.isEnabled || !node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            throw AutomationException("action_failed", "Impossible d’actionner le contrôle $label.")
+        // Compose often puts the description on an icon inside the actual clickable parent.
+        var current = AccessibilityNodeInfo.obtain(node)
+        try {
+            repeat(9) {
+                if (current.isEnabled && current.isClickable) {
+                    if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
+                    throw AutomationException("action_failed", "Impossible d’actionner le contrôle $label.")
+                }
+                val parent = current.parent ?: throw AutomationException(
+                    "action_failed", "Le contrôle $label n’expose aucune action de clic accessible."
+                )
+                current.recycle()
+                current = parent
+            }
+            throw AutomationException("action_failed", "Aucun parent cliquable trouvé pour $label.")
+        } finally {
+            current.recycle()
+        }
+    }
+
+    // Explicitly opted-in fallback: use the current semantic node bounds, never stored coordinates.
+    suspend fun activateInputByGesture(packageName: String, node: AccessibilityNodeInfo): Boolean {
+        if (currentPackageName() != packageName || node.packageName?.toString() != packageName || !node.isVisibleToUser || !node.isEnabled) {
+            throw AutomationException("wrong_app", "Le champ cible n’est pas visible dans l’application active.")
+        }
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.getRealMetrics(metrics)
+        if (bounds.isEmpty || bounds.left < 0 || bounds.top < 0 || bounds.right > metrics.widthPixels || bounds.bottom > metrics.heightPixels) {
+            throw AutomationException("action_failed", "La zone du champ n’est pas entièrement visible.")
+        }
+        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 80))
+            .build()
+        return suspendCancellableCoroutine { continuation ->
+            val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resume(true)
+                }
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resume(false)
+                }
+            }, null)
+            if (!accepted && continuation.isActive) continuation.resume(false)
+        }
+    }
+
+    // Optional short swipe on the currently identified scrollable region, used only when reconstructing clipped messages.
+    suspend fun scrollBackwardShort(packageName: String, selectors: List<UiSelector>): Boolean {
+        if (currentPackageName() != packageName) throw AutomationException("wrong_app", "L’application cible n’est pas au premier plan.")
+        val node = findUniqueNode(packageName, selectors, "scroll_to_end")
+        val bounds = Rect()
+        try {
+            if (!node.isScrollable || !node.isVisibleToUser || !node.isEnabled) throw AutomationException("action_failed", "La zone de conversation ne peut pas défiler.")
+            node.getBoundsInScreen(bounds)
+        } finally { node.recycle() }
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.getRealMetrics(metrics)
+        if (bounds.isEmpty || bounds.left < 0 || bounds.top < 0 || bounds.right > metrics.widthPixels || bounds.bottom > metrics.heightPixels) {
+            throw AutomationException("action_failed", "La zone de conversation n’est pas entièrement visible.")
+        }
+        val x = bounds.exactCenterX()
+        val path = Path().apply {
+            moveTo(x, bounds.top + bounds.height() * 0.40f)
+            lineTo(x, bounds.top + bounds.height() * 0.62f)
+        }
+        val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 300)).build()
+        return suspendCancellableCoroutine { continuation ->
+            val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resume(true)
+                }
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resume(false)
+                }
+            }, null)
+            if (!accepted && continuation.isActive) continuation.resume(false)
         }
     }
 
@@ -219,6 +424,7 @@ class ClickAccessibilityService : AccessibilityService() {
             "content_description" -> node.contentDescription?.toString()
             "text" -> node.text?.toString()
             "class_name" -> node.className?.toString()
+            "scrollable" -> node.isScrollable.toString()
             else -> null
         } ?: return false
 
@@ -230,9 +436,9 @@ class ClickAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun appendNodeText(node: AccessibilityNodeInfo, output: StringBuilder) {
+    private fun appendNodeText(node: AccessibilityNodeInfo, output: StringBuilder, textOnly: Boolean = false) {
         val ownText = node.text?.toString()?.takeIf(String::isNotBlank)
-            ?: node.contentDescription?.toString()?.takeIf(String::isNotBlank)
+            ?: if (!textOnly) node.contentDescription?.toString()?.takeIf(String::isNotBlank) else null
         if (ownText != null) {
             if (output.length + ownText.length > MAX_RESPONSE_TEXT_CHARS) {
                 throw AutomationException("response_too_large", "La réponse dépasse la limite de lecture.")
@@ -243,7 +449,7 @@ class ClickAccessibilityService : AccessibilityService() {
         for (index in 0 until node.childCount) {
             val child = node.getChild(index) ?: continue
             try {
-                appendNodeText(child, output)
+                appendNodeText(child, output, textOnly)
             } finally {
                 child.recycle()
             }
