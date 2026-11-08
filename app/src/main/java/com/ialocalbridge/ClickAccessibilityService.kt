@@ -179,6 +179,40 @@ class ClickAccessibilityService : AccessibilityService() {
         throw AutomationException("response_incomplete", "Conteneur défilant introuvable pour vérifier la réponse.")
     }
 
+    /**
+     * Fail closed when a response is clipped or there is no meaningful viewport.
+     * Only used when the current conversation exposes no scrollable container.
+     */
+    fun isWhollyVisibleInNonScrollingViewport(node: AccessibilityNodeInfo): Boolean {
+        if (!node.isVisibleToUser) return false
+        val message = Rect().also { node.getBoundsInScreen(it) }
+        if (message.isEmpty) return false
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.getRealMetrics(metrics)
+        if (message.left < 0 || message.top < 0 || message.right > metrics.widthPixels || message.bottom > metrics.heightPixels) return false
+        var candidate: Rect? = null
+        var parent = node.parent
+        while (parent != null) {
+            val current = parent
+            try {
+                if (current.isScrollable) return false
+                val bounds = Rect().also { current.getBoundsInScreen(it) }
+                if (candidate == null && current.isVisibleToUser && current.childCount > 1 &&
+                    bounds.height() > message.height() && bounds.contains(message)) {
+                    candidate = bounds
+                }
+                parent = current.parent
+            } finally { current.recycle() }
+        }
+        val viewport = candidate ?: return false
+        return ViewportVisibility.strictlyInside(
+            ViewportBounds(message.left, message.top, message.right, message.bottom),
+            ViewportBounds(viewport.left, viewport.top, viewport.right, viewport.bottom),
+            metrics.widthPixels, metrics.heightPixels
+        )
+    }
+
     fun scrollForward(packageName: String, selectors: List<UiSelector>): Boolean =
         scroll(packageName, selectors, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
 
@@ -206,6 +240,21 @@ class ClickAccessibilityService : AccessibilityService() {
                 catch (e: AutomationException) { if (e.errorCode == "selector_missing") null else throw e }
             ResponseBaseline(answer, input)
         } catch (e: Exception) { answer?.recycle(); throw e }
+    }
+
+    /** The submitted prompt is present as a new, non-editable visible node. */
+    fun hasNewSubmittedPrompt(packageName: String, prompt: String, baseline: ResponseBaseline): Boolean {
+        val nodes = readTree(packageName)
+        return try {
+            nodes.any { it.isVisibleToUser && !it.isEditable && it.text?.toString() == prompt &&
+                (baseline.prompt == null || it != baseline.prompt) }
+        } finally { nodes.forEach { it.recycle() } }
+    }
+
+    fun hasNewAnswerIdentity(packageName: String, selectors: List<UiSelector>, baseline: ResponseBaseline): Boolean {
+        val answer = try { findLatestNode(packageName, selectors, "assistant_message") }
+            catch (e: AutomationException) { if (e.errorCode == "selector_missing") return false else throw e }
+        return try { baseline.answer == null || answer != baseline.answer } finally { answer.recycle() }
     }
 
     fun hasNewAnswerAfterPrompt(packageName: String, answerSelectors: List<UiSelector>, prompt: String, baseline: ResponseBaseline): Boolean {
@@ -355,7 +404,9 @@ class ClickAccessibilityService : AccessibilityService() {
         var selected: AccessibilityNodeInfo? = null
         try {
             for (selector in selectors) {
-                val matches = nodes.filter { matches(it, selector) }
+                val matches = nodes.filter {
+                    matches(it, selector) && (label != "scroll_to_end" || isPlausibleConversationScroll(it))
+                }
                 if (matches.isEmpty()) continue
                 if (matches.size > 1 && !allowMultiple) {
                     throw AutomationException(
@@ -415,6 +466,19 @@ class ClickAccessibilityService : AccessibilityService() {
             val child = node.getChild(index) ?: continue
             collectNodes(child, result)
         }
+    }
+
+    /** Exclude small horizontal toolbars that also report isScrollable=true. */
+    private fun isPlausibleConversationScroll(node: AccessibilityNodeInfo): Boolean {
+        if (!node.isScrollable) return false
+        val bounds = Rect().also { node.getBoundsInScreen(it) }
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.getRealMetrics(metrics)
+        return ViewportVisibility.isPlausibleConversationScroll(
+            ViewportBounds(bounds.left, bounds.top, bounds.right, bounds.bottom),
+            metrics.widthPixels, metrics.heightPixels
+        )
     }
 
     private fun matches(node: AccessibilityNodeInfo, selector: UiSelector): Boolean {

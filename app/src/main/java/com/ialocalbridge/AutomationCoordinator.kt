@@ -73,7 +73,10 @@ class AutomationCoordinator(context: Context) {
         withContext(Dispatchers.Main.immediate) {
             service.configureTarget(config.packageName)
         }
-        scrollToEnd(service, config)
+        // A short conversation can have no scroll container at all. If so,
+        // verify new prompt/answer ordering before accepting any reply and
+        // reject an existing answer unless it is wholly inside the viewport.
+        val initialScrollMissing = scrollToEnd(service, config, allowNonScrolling = true)
         val initialAnswer = withContext(Dispatchers.Main.immediate) {
             try {
                 service.readLatestText(config.packageName, config.selectors.assistantMessage, "assistant_message")
@@ -81,7 +84,7 @@ class AutomationCoordinator(context: Context) {
                 if (e.errorCode == "selector_missing") "" else throw e
             }
         }
-        val baseline = if (config.selectors.detectIdenticalResponses) withContext(Dispatchers.Main.immediate) {
+        val baseline = if (config.selectors.detectIdenticalResponses || initialScrollMissing) withContext(Dispatchers.Main.immediate) {
             service.responseBaseline(config.packageName, config.selectors.assistantMessage, prompt)
         } else null
         try {
@@ -98,14 +101,23 @@ class AutomationCoordinator(context: Context) {
             val startedAt = System.currentTimeMillis()
             var lastObserved = ""
             var stablePolls = 0
+            var sawSubmittedPrompt = false
+            var sawGenerating = false
 
             while (System.currentTimeMillis() - startedAt < config.timeouts.responseMs) {
                 if (cancelled.get()) {
                     throw AutomationException("cancelled", "La requête a été arrêtée.")
                 }
+                // Observe the submitted prompt before scrolling: a long answer may
+                // virtualize it later, when its response anchor finally appears.
+                if (!sawSubmittedPrompt && baseline != null) {
+                    sawSubmittedPrompt = withContext(Dispatchers.Main.immediate) {
+                        service.hasNewSubmittedPrompt(config.packageName, prompt, baseline)
+                    }
+                }
                 delay(config.timeouts.pollIntervalMs)
 
-                scrollToEnd(service, config)
+                scrollToEnd(service, config, allowNonScrolling = initialScrollMissing, validateVisibleAnswer = false)
                 val (answer, isGenerating) = withContext(Dispatchers.Main.immediate) {
                     service.requireTargetForeground(config.packageName)
                     val currentAnswer = try {
@@ -121,14 +133,16 @@ class AutomationCoordinator(context: Context) {
                     currentAnswer to active
                 }
 
+                sawGenerating = sawGenerating || isGenerating
                 // A shrinking view of the previous response is not evidence of a new answer.
                 val resemblesPrevious = answer.isNotBlank() && initialAnswer.isNotBlank() && initialAnswer.contains(answer)
-                val newByIdentity = if (resemblesPrevious && baseline != null) {
+                val newByIdentity = if ((resemblesPrevious || initialScrollMissing) && baseline != null && answer.isNotBlank()) {
                     withContext(Dispatchers.Main.immediate) {
-                        service.hasNewAnswerAfterPrompt(config.packageName, config.selectors.assistantMessage, prompt, baseline)
+                        service.hasNewAnswerAfterPrompt(config.packageName, config.selectors.assistantMessage, prompt, baseline) ||
+                            (sawSubmittedPrompt && sawGenerating && service.hasNewAnswerIdentity(config.packageName, config.selectors.assistantMessage, baseline))
                     }
                 } else false
-                val candidateIsNew = answer.isNotBlank() && (!resemblesPrevious || newByIdentity)
+                val candidateIsNew = ResponseIdentityPolicy.isNew(answer, initialAnswer, initialScrollMissing, newByIdentity)
                 if (candidateIsNew) {
                     if (answer == lastObserved) {
                         stablePolls++
@@ -137,7 +151,7 @@ class AutomationCoordinator(context: Context) {
                         stablePolls = 0
                     }
                     if (!isGenerating && stablePolls >= config.timeouts.stablePolls) {
-                        return readCompleteResponse(service, config)
+                        return readCompleteResponse(service, config, initialScrollMissing)
                     }
                 } else {
                     lastObserved = ""
@@ -152,7 +166,7 @@ class AutomationCoordinator(context: Context) {
         } finally { baseline?.recycle() }
     }
 
-    private suspend fun readCompleteResponse(service: ClickAccessibilityService, config: ProviderConfig): String {
+    private suspend fun readCompleteResponse(service: ClickAccessibilityService, config: ProviderConfig, startedWithoutScroll: Boolean): String {
         val (container, selector) = withContext(Dispatchers.Main.immediate) {
             service.latestResponseContainer(config.packageName, config.selectors.assistantMessage, "assistant_message")
         }
@@ -166,6 +180,12 @@ class AutomationCoordinator(context: Context) {
                 }
             }
             if (!selector.rejectClipped) return fragments.joinToString("\n").trim()
+            // Some chat UIs expose no scrollable node at all until the conversation
+            // overflows. Accept only a wholly visible response inside a verifiable
+            // multi-child viewport; otherwise preserve the fail-closed behavior.
+            if (startedWithoutScroll && withContext(Dispatchers.Main.immediate) {
+                    service.isWhollyVisibleInNonScrollingViewport(container)
+                }) return fragments.joinToString("\n").trim()
             if (!withContext(Dispatchers.Main.immediate) { service.isClippedAtScrollStart(container) }) {
                 return fragments.joinToString("\n").trim()
             }
@@ -210,14 +230,34 @@ class AutomationCoordinator(context: Context) {
         } finally { container.recycle() }
     }
 
-    private suspend fun scrollToEnd(service: ClickAccessibilityService, config: ProviderConfig) {
-        if (config.selectors.scrollToEnd.isEmpty()) return
+    /** Returns true if this conversation has no scrollable container. */
+    private suspend fun scrollToEnd(
+        service: ClickAccessibilityService,
+        config: ProviderConfig,
+        allowNonScrolling: Boolean = false,
+        validateVisibleAnswer: Boolean = true
+    ): Boolean {
+        if (config.selectors.scrollToEnd.isEmpty()) return false
         repeat(40) {
             if (cancelled.get()) throw AutomationException("cancelled", "La requête a été arrêtée.")
             val moved = withContext(Dispatchers.Main.immediate) {
-                service.scrollForward(config.packageName, config.selectors.scrollToEnd)
+                try {
+                    service.scrollForward(config.packageName, config.selectors.scrollToEnd)
+                } catch (e: AutomationException) {
+                    // A short chat may have no scroll container; never ignore
+                    // ambiguity or a wrong application. If an existing answer is
+                    // visible, require proof that it is not clipped before sending.
+                    if (!allowNonScrolling || e.errorCode != "selector_missing") throw e
+                    if (validateVisibleAnswer && service.hasAnyMatch(config.packageName, config.selectors.assistantMessage)) {
+                        val (container, _) = service.latestResponseContainer(config.packageName, config.selectors.assistantMessage, "assistant_message")
+                        val complete = try { service.isWhollyVisibleInNonScrollingViewport(container) } finally { container.recycle() }
+                        if (!complete) throw AutomationException("response_incomplete", "Impossible de vérifier la réponse précédente sans conteneur défilant.")
+                    }
+                    null
+                }
             }
-            if (!moved) return
+            if (moved == null) return true
+            if (!moved) return false
             // Let Compose finish the scroll before asking for the next page.
             delay(250)
         }

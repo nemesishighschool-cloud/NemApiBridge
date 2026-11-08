@@ -15,7 +15,7 @@ API Bridge est une application Android Kotlin qui expose un serveur HTTP local c
 - Traiter au plus une opération UI à la fois sur un appareil. Protéger l’état partagé et borner la file d’attente.
 - Respecter les consentements Android : l’utilisateur active le service d’accessibilité et se connecte lui-même à l’application cible. Ne pas contourner les écrans de connexion, les défis de compte ou les validations.
 - Limiter les observations à l’application cible pendant les requêtes. Ne pas écrire de prompts, réponses, données du presse-papiers, identifiants ou clés dans les logs.
-- Garder l’accès réseau local. La protection Bearer de l’API est facultative et désactivée par défaut ; le chat et l’administration web sont ouverts sur le réseau local même quand elle est activée. Documenter clairement ce risque. Ne pas ajouter de secret dans le code ou les ressources versionnées.
+- Garder l’accès réseau local. La protection Bearer de l’API est facultative et désactivée par défaut ; le chat et l’administration web sont ouverts sur le réseau local même quand elle est activée. Documenter clairement ce risque. À la demande expresse du propriétaire, le keystore release et son mot de passe sont publiés dans signing/ : ils sont compromis et ne prouvent pas l’identité du signataire. Ne pas versionner d’autres secrets.
 - Éviter les dépendances nouvelles si les API Android et bibliothèques déjà présentes suffisent.
 - Respecter les conventions Gradle, Kotlin, les noms et le formatage existants.
 - Préserver les changements déjà présents dans l’arbre de travail; ne jamais réinitialiser ou supprimer les changements de quelqu’un d’autre.

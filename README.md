@@ -105,6 +105,17 @@ NODE_PATH=/tmp/nem-browser-test/node_modules LIVE_CHAT=1 node tests/web-e2e.cjs
 
 Le serveur doit être joignable sur `127.0.0.1:8090`, le provider DeepSeek configuré, et son application ouverte au premier plan. `LIVE_CHAT=1` envoie une vraie question ; sans cette variable, seuls l’interface et la navigation sont testées. `NEM_WEB_URL` et `NEM_PROVIDER` permettent de choisir une autre URL ou un autre provider.
 
-L’APK debug se trouve dans `app/build/outputs/apk/debug/`. Pour compiler un APK release signé avec votre clé privée, définissez `NEM_SIGNING_STORE_FILE` (chemin du fichier PKCS12, alias `nemapibridge`) et `NEM_SIGNING_PASSWORD` dans l’environnement, puis lancez `./gradlew assembleRelease`. Ne versionnez jamais ces secrets. Sans ces variables, le build release est non signé. Conservez une sauvegarde privée de la clé : une future mise à jour Android doit être signée avec le même certificat, sinon une désinstallation et la perte des données locales seront nécessaires.
+Pour une régression DeepSeek plus approfondie sur un appareil connecté à ADB : `python3 tests/deepseek-regression.py --long`. Le script ouvre une **nouvelle conversation**, puis envoie plusieurs vraies requêtes et vérifie une réponse longue. Ne l’exécutez pas si vous voulez conserver l’écran de conversation courant ; vos conversations enregistrées ne sont pas supprimées. `--adb`, `--url` et `--provider` adaptent le chemin ADB et le serveur.
+
+L’APK debug se trouve dans `app/build/outputs/apk/debug/`. Pour compiler un APK release signé avec votre clé privée, définissez `NEM_SIGNING_STORE_FILE` (chemin du fichier PKCS12, alias `nemapibridge`) et `NEM_SIGNING_PASSWORD` dans l’environnement, puis lancez `./gradlew assembleRelease`. Sans ces variables, le build release est non signé. À la demande explicite du propriétaire, le keystore `signing/nemapibridge-release.p12` et son mot de passe `signing/password.txt` sont présents dans ce dépôt public. **Cette clé est donc publique et ne protège pas contre les APK malveillants signés par des tiers ; rendre le dépôt privé ensuite ne révoque pas les copies déjà faites.** Pour continuer à mettre à jour les installations existantes sans perdre leurs données, il faut conserver le même certificat. Pour retrouver une signature privée, il faudrait adopter une nouvelle clé et, sans mécanisme de rotation prévu, désinstaller l’ancienne application avant d’installer la nouvelle.
 
 Voir [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) et [`AGENTS.md`](AGENTS.md) pour les contrats et contraintes du projet.
+
+
+Pour compiler avec la clé publiée volontairement dans ce dépôt :
+
+```bash
+export NEM_SIGNING_STORE_FILE="$(pwd)/signing/nemapibridge-release.p12"
+export NEM_SIGNING_PASSWORD="$(cat signing/password.txt)"
+./gradlew assembleRelease
+```
