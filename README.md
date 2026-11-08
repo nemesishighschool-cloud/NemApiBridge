@@ -1,12 +1,14 @@
 # NemApiBridge
 
+Le client officiel NemApiBridge.
+
 NemApiBridge transforme un **téléphone Android** en passerelle HTTP locale compatible avec l’API de conversation OpenAI. Le serveur et l’automatisation fonctionnent sur le téléphone ; votre ordinateur s’y connecte en Wi-Fi ou par USB. Une interface web offre un tableau de bord et un chat de test sans clé.
 
 > **Réseau privé uniquement.** Par défaut, l’API, le tableau de bord et le chat web sont ouverts sans authentification. Même si vous activez la clé pour l’API, le tableau de bord et son chat restent ouverts et permettent d’utiliser l’automatisation. Tout appareil capable de joindre le téléphone peut donc s’en servir. Le trafic HTTP n’est pas chiffré : ne publiez jamais le serveur sur Internet et ne l’utilisez pas sur un réseau non fiable.
 
 ## Mise en route sur le téléphone
 
-1. Installez l’APK de la [release GitHub](https://github.com/nemesishighschool-cloud/api_bridge/releases), ainsi que l’application IA cible.
+1. Installez l’APK de la [release GitHub](https://github.com/nemesishighschool-cloud/NemBridgeApi/releases), ainsi que l’application IA cible.
 2. Connectez-vous vous-même dans cette application. Pour DeepSeek, utilisez la version Android et la langue mentionnées dans [`providers/README.md`](providers/README.md).
 3. Ouvrez NemApiBridge → **Providers** → **Importer JSON**, puis choisissez `deepseek.json` ou un autre provider compatible. Son nom devient l’identifiant du modèle.
 4. Dans **Réglages**, accordez volontairement l’accès d’accessibilité et la permission de superposition. Choisissez le port : **8090 par défaut** (un port déjà enregistré est conservé après mise à jour).
