@@ -18,6 +18,8 @@ const assert = require('node:assert/strict');
   await page.waitForFunction(() => document.getElementById('st-ready')?.textContent === '1/1', null, {timeout: 10000});
   assert.match(await page.locator('#dash-providers').innerText(), /DeepSeek/);
   await visit('/next/config', 'Configuration');
+  assert.match(await page.locator('body').innerText(), /X-NemApi-Ignored-Parameters/);
+  assert.match(await page.locator('body').innerText(), /ne contrôlent pas le fournisseur Android/);
   await page.waitForFunction(() => document.querySelector('#cfg-models')?.textContent.includes('DeepSeek'));
   await page.locator('label:has(#cfg-stream) .slider').click();
   await page.waitForFunction(async () => !(await (await fetch('/web/nem/settings')).json()).stream_enabled);
