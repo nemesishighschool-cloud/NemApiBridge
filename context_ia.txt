@@ -1,1 +1,0 @@
-Ce fichier est conservé pour les anciens liens. Le contexte technique actualisé et les consignes de reprise figurent dans docs/CONTEXTE.md et AGENTS.md. Le README décrit le comportement et les limites utilisateur.
