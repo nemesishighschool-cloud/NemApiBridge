@@ -1,1 +1,1 @@
-Staging only: adapted from NemApi 7441ce1 with owner permission. Not production UI until parity and tests are complete.
+Adapted from NemApi commit 7441ce1 with owner permission. Android adaptation: functionality differs from the web proxy; see release notes and README.

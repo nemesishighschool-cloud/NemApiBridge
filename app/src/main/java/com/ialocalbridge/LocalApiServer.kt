@@ -110,7 +110,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                         .putBoolean(API_KEY_REQUIRED_KEY, uri.endsWith("/enable")).apply()
                     nemJson(JSONObject().put("require_auth", apiKeyRequired()))
                 } else methodNotAllowed("POST")
-                "/web/nem/health" -> if (session.method == Method.GET) nemJson(JSONObject().put("app_version", "1.1.0-dev")) else methodNotAllowed("GET")
+                "/web/nem/health" -> if (session.method == Method.GET) nemJson(JSONObject().put("app_version", "1.1.0")) else methodNotAllowed("GET")
                 "/web/nem/stop" -> if (session.method == Method.POST) { drainBody(session); handleStopRequest() } else methodNotAllowed("POST")
                 "/web/models" -> if (session.method == Method.GET) handleModelsRequest() else methodNotAllowed("GET")
                 "/web/status" -> if (session.method == Method.GET) handleStatusRequest() else methodNotAllowed("GET")

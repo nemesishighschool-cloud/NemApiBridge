@@ -28,6 +28,6 @@ Les gestes sont désactivés par défaut pour les autres providers. La reconnais
 
 ### Mise à jour et limites
 
-La configuration DeepSeek 2.7.5 anglaise de la v1.0.2 active `copy_response` et utilise un délai de génération de 10 minutes. Après une mise à jour depuis une version antérieure, **arrêtez le serveur, puis réimportez le `deepseek.json` de cette release** sous le nom `DeepSeek` : l’installation de l’APK ne remplace pas les providers enregistrés. Le délai de votre client HTTP doit aussi être suffisant.
+La configuration DeepSeek 2.7.5 anglaise de la v1.1.0 active `copy_response` et utilise un délai de génération de 10 minutes. Après une mise à jour depuis une version antérieure, **arrêtez le serveur, puis réimportez le `deepseek.json` de cette release** sous le nom `DeepSeek` : l’installation de l’APK ne remplace pas les providers enregistrés. Le délai de votre client HTTP doit aussi être suffisant.
 
 La réponse copiée est limitée à 500 000 caractères par NemApiBridge, et Android ou DeepSeek peuvent imposer des limites inférieures. Les mises en forme et la complétude dépendent de ce que le bouton DeepSeek copie ; il n’y a pas de garantie générale pour toutes les versions, langues, pièces jointes ou tailles. Si la copie ne peut pas être vérifiée, la requête échoue. Le réseau web reste ouvert sans clé ; utilisez-le seulement sur un réseau fiable.

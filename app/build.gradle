@@ -11,13 +11,13 @@ android {
         applicationId "com.ialocalbridge"
         minSdk 24
         targetSdk 33
-        versionCode 3
-        versionName "1.0.2"
+        versionCode 4
+        versionName "1.1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Release secrets are supplied outside the repository, never committed.
+    // The owner explicitly chose to publish this signing key; see signing/README.md.
     signingConfigs {
         release {
             def filePath = System.getenv("NEM_SIGNING_STORE_FILE")

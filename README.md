@@ -48,11 +48,9 @@ Pour retirer la redirection : `adb forward --remove tcp:8090`. Il s’agit de **
 
 ## Interface web
 
-La racine `/` ou `/admin` affiche l’état du serveur, l’accessibilité, l’application au premier plan, le provider actif et les statistiques depuis le dernier démarrage. On peut choisir le provider par défaut, activer ou désactiver le streaming simulé et demander l’arrêt d’une génération si le provider le permet.
+Le tableau de bord adapté de NemApi est accessible sur `/` et `/admin`, et le chat de test sur `/chat`. Il comprend configuration, statistiques estimées, clés API et intégrations agents. L’interface historique reste disponible sur `/legacy` et son chat sur `/legacy/chat`. L’accès web reste ouvert sans clé, même lorsque la protection API est activée ; l’administration web peut afficher et gérer les clés.
 
-La page `/chat` permet de choisir un provider importé et de converser sans clé. Les messages de la page restent dans l’onglet jusqu’à son rechargement ou leur effacement ; ils sont transmis à l’application IA choisie. Les réponses ne sont pas générées par NemApiBridge lui-même.
-
-Le port et l’option **Exiger une clé pour l’API** sont réglés sur Android. Le chat web reste sans clé dans tous les cas : l’option ne sécurise donc pas le téléphone contre l’utilisation de l’interface web par d’autres appareils du réseau.
+Le provider est importé dans l’application Android : un nouvel import remplace le provider enregistré. Le chat envoie à l’application IA les messages conservés dans son onglet. Les options d’autoconfiguration, de nouvelle discussion à chaque requête et de Markdown premium sont indisponibles sur Android. Cette interface est une adaptation partielle, pas une parité complète avec NemApi.
 
 ## API
 
@@ -72,26 +70,40 @@ Pour activer le contrôle Bearer, utilisez **Réglages → Clé API → Exiger u
 | Méthode | Route | Fonction |
 |---|---|---|
 | `GET` | `/v1/models` | Providers disponibles comme modèles |
-| `POST` | `/v1/chat/completions` | Conversation OpenAI, JSON ou SSE simulé |
+| `POST` | `/v1/chat/completions` | Conversation OpenAI partielle, JSON ou SSE simulé |
+| `POST` | `/v1/responses` | Sous-ensemble de Responses, JSON ou SSE simulé |
 | `GET` | `/health` | Disponibilité minimale, toujours ouverte |
 | `GET` | `/status`, `/stats` | Accessibilité, application cible et statistiques |
 | `GET/POST` | `/config` | Provider actif et autorisation du streaming |
 | `GET/POST` | `/ask`, `/stop` | Question simplifiée et demande d’arrêt |
 | `POST` | `/upload` | Upload, taille maximale 20 Mo |
-| `GET` | `/`, `/admin`, `/chat` | Tableau de bord et chat navigateur, sans clé |
+| `GET` | `/`, `/admin`, `/chat` | Tableau de bord NemApi adapté et chat, sans clé |
+| `GET` | `/legacy`, `/legacy/chat` | Ancienne interface Android et son chat |
 | `GET/POST` | `/web/*` | Routes utilisées par l’interface web, sans clé |
 
 Les routes API hors `/health` nécessitent la clé uniquement si l’option Android est activée. Les routes `/web/*` sont toujours ouvertes aux clients locaux.
 
 ## Comportement et limites
 
-Sur la branche de développement, le service essaie de masquer le clavier juste après l’envoi lorsqu’il détecte une fenêtre de clavier ; il évite l’action système Retour et rétablit le mode de clavier précédent. Cette modification n’est pas incluse dans l’APK v1.0.2 publié. Le comportement dépend du clavier et de l’appareil.
+Le service essaie de masquer le clavier après l’envoi s’il détecte sa fenêtre, sans action système Retour et en rétablissant le mode précédent. Vérifié sur émulateur Android 13 ; le comportement sur d’autres claviers ou appareils n’est pas garanti.
 
 - Une opération d’automatisation à la fois et une en attente au maximum. Les erreurs de cible, de sélecteur, de délai ou de surcharge sont explicites.
 - Le streaming SSE est **simulé** : la réponse complète est d’abord lue dans l’application, puis découpée en événements SSE ; ce n’est pas un flux de tokens natif.
 - Le provider DeepSeek fourni a été testé avec DeepSeek 2.7.5 en anglais sur émulateur Android 13, y compris des réponses longues et le chat web. Autres versions, langues et téléphones physiques restent à valider. Voir [`providers/README.md`](providers/README.md).
 - Le service d’accessibilité, la connexion au compte et les permissions sont activés par l’utilisateur. Les restrictions Android, la mise en veille et les optimisations batterie peuvent interrompre le fonctionnement.
-- Le provider DeepSeek v1.0.2 peut copier la réponse entière dans le presse-papiers Android ; l’ancien contenu est remplacé et la réponse y reste accessible. Des applications en arrière-plan peuvent lire le presse-papiers sur Android avant 10. La copie et la fidélité dépendent de DeepSeek et d’Android ; si la copie ne peut pas être vérifiée, une erreur est renvoyée. Arrêtez le serveur, puis réimportez le JSON de la v1.0.2 sous le nom `DeepSeek` pour activer ce mode.
+- Le provider DeepSeek v1.1.0 peut copier la réponse entière dans le presse-papiers Android ; l’ancien contenu est remplacé et la réponse y reste accessible. Des applications en arrière-plan peuvent lire le presse-papiers sur Android avant 10. La copie et la fidélité dépendent de DeepSeek et d’Android ; si la copie ne peut pas être vérifiée, une erreur est renvoyée. Arrêtez le serveur, puis réimportez le JSON de la v1.1.0 sous le nom `DeepSeek` pour activer ce mode.
+
+
+### Limites connues de la v1.1.0
+
+- **Arrêt :** le bridge demande l’annulation de ses requêtes active et en attente, mais la génération DeepSeek peut continuer. Un geste ou clic envoyé ne prouve pas son arrêt ; attendez la fin ou arrêtez-la manuellement dans l’application. Une nouvelle requête peut être refusée tant que la génération est active. L’action Stop peut aussi être lente. En streaming, une erreur ultérieure est transmise dans le flux, pas comme un nouveau statut HTTP.
+- **API partielle :** les options et outils OpenAI/NemApi ne sont pas tous pris en charge. `previous_response_id`, `store=true`, outils autres que `function`, `strict=true`, `parallel_tool_calls=false` et formats structurés non garantis sont notamment refusés. Les limites `max_tokens`/`max_output_tokens`, `temperature` et `top_p` ne sont pas appliquées au modèle Android. `X-NemApi-Ignored-Parameters` avertit pour certains champs ignorés, sans être exhaustif ; ne l’utilisez pas comme garde-fou de coût ou de sécurité.
+- **Agents :** Qwen Code et le CLI NEMESIS ont réussi certains essais réels de fichiers ; seuls les composants LLM de MonkeyCode ont été testés. L’intégration complète et tous les outils ne sont pas garantis. Le contexte incrémental dépend d’un repère visuel non fiable comme identifiant de discussion ; réinitialisez-le après un changement manuel. Si le repère manque, l’historique complet est renvoyé.
+- **Incidents observés :** une réponse de 20 lignes a expiré après 210 s alors qu’elle semblait terminée ; six répétitions ont réussi, sans expliquer l’échec. Une image JPEG bleue visible a reçu la réponse « White » dans une discussion existante ; JPEG et WebP ont ensuite été reconnus dans de nouvelles discussions. Les causes restent inconnues.
+- **Images :** PNG, JPEG et WebP en data URL ; maximum huit images, 4 Mio dans le chat web et 6 Mio pour le corps de requête. Les URL distantes et les `file_id` ne sont pas pris en charge. D’autres formats, fournisseurs et sélecteurs Android ne sont pas validés.
+- **Tests et risques :** Android 13 émulé et DeepSeek 2.7.5 en anglais ont été utilisés ; Android 8.1 physique, Wi-Fi physique et autres fournisseurs ne sont pas validés. Les statistiques de tokens sont estimées, et les coûts réels ne sont pas connus.
+
+La [fiche des essais et limites](docs/1.1.0-WIP.md) détaille les résultats et leurs conditions. La publication ne signifie pas une validation exhaustive ni une parité complète avec NemApi.
 
 ## Développement et signature
 
