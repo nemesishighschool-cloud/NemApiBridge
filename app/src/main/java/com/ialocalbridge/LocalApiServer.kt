@@ -142,7 +142,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             val status = when (e.errorCode) {
                 "queue_full", "queue_timeout" -> Response.Status.SERVICE_UNAVAILABLE
                 "accessibility_disabled", "wrong_app", "selector_missing", "selector_ambiguous",
-                "action_failed", "response_timeout", "response_incomplete", "user_intervention_required", "cancelled", "tool_call_required" -> Response.Status.CONFLICT
+                "action_failed", "response_timeout", "response_incomplete", "user_intervention_required", "cancelled", "tool_call_required", "tool_call_incomplete", "continuation_ambiguous" -> Response.Status.CONFLICT
                 "response_too_large", "request_too_large" -> Response.Status.PAYLOAD_TOO_LARGE
                 else -> Response.Status.BAD_REQUEST
             }
@@ -261,9 +261,6 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
 
         if (imagePayload.images.isNotEmpty() && (config.selectors.imageAttach.isEmpty() || config.selectors.imageDocument.isEmpty() || config.selectors.imageDelete.isEmpty()))
             throw AutomationException("unsupported_content", "Ce provider n’a pas de sélecteurs d’image configurés.")
-        val historyPrompt = buildPrompt(messages, config.maxHistoryChars, rejectHistoryTruncation = imagePayload.images.isNotEmpty())
-        val messagesPrompt = historyPrompt + if (imagePayload.images.isNotEmpty())
-            "\n\nThe attached images are numbered in the same order as the [Image N attached] markers in the history. Earlier images are reattached as context." else ""
         val toolsValue = request.opt("tools")
         val tools = when (toolsValue) {
             null, JSONObject.NULL -> null
@@ -275,11 +272,26 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         if (agent != null && !agent.tools && tools != null && tools.length() > 0)
             throw AutomationException("unsupported_tool", "Les appels d’outils sont désactivés pour cette intégration.")
         val toolInstruction = buildToolInstruction(tools, toolChoice)
-        val prompt = if (toolInstruction.isEmpty()) messagesPrompt else "$messagesPrompt\n\n$toolInstruction"
         val requestedStream = request.optBoolean("stream", false)
         if (requestedStream && !streamEnabled) {
             return jsonError(Response.Status.BAD_REQUEST, "streaming_disabled", "Le streaming est désactivé dans la configuration.")
         }
+        if (agent?.localSideQueries == true && imagePayload.images.isEmpty()) {
+            val local = AgentSideQueries.classify(messages, tools, toolChoice, incoming.optJSONObject("metadata"))
+            if (local != null) {
+                agentIntegrations.countLocal()
+                if (local.error != null) throw AutomationException("side_query_not_answered", local.error)
+                val done = CompletionData(local.text, local.calls, 0, 0)
+                return if (requestedStream) {
+                    if (responseMode) buildResponsesStream(modelName) { done } else buildStreamResponse(modelName) { done }
+                } else if (responseMode) nemJson(responsesOutput(ResponsesCodec.newResponseId(), modelName, done))
+                else buildJsonResponse(modelName, done.result, done.parsed, 0, 0)
+            }
+        }
+        val historyPrompt = buildPrompt(messages, config.maxHistoryChars, rejectHistoryTruncation = imagePayload.images.isNotEmpty())
+        val messagesPrompt = historyPrompt + if (imagePayload.images.isNotEmpty())
+            "\n\nThe attached images are numbered in the same order as the [Image N attached] markers in the history. Earlier images are reattached as context." else ""
+        val prompt = if (toolInstruction.isEmpty()) messagesPrompt else "$messagesPrompt\n\n$toolInstruction"
 
         fun screenMarker(): String? {
             val service = ClickAccessibilityService.instance ?: return null
@@ -298,7 +310,9 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                 if (tools != null && tools.length() > 0) text + "\n\nReminder: to call a tool, use a fenced tool block with <tool>{JSON}</tool>." else text
             }
             val sentPrompt = plan.prompt
-            val result = runBlocking(Dispatchers.IO) { coordinator.processQuestion(config, sentPrompt, imagePayload.images) }
+            val result = runBlocking(Dispatchers.IO) { coordinator.processQuestion(config, sentPrompt, imagePayload.images,
+                detectIncompleteTool = toolChoice != "none" && ((tools != null && tools.length() > 0) || agent?.nativeTools == true),
+                allowContinuation = agent?.continuation == true, onContinuation = agentIntegrations::countContinuation) }
             totalRequests.incrementAndGet()
             val promptTokens = estimateTokens(sentPrompt)
             val completionTokens = estimateTokens(result)

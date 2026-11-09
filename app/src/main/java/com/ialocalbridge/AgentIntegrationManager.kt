@@ -19,15 +19,21 @@ class AgentIntegrationManager(context: Context) {
     @Volatile private var full = 0L
     @Volatile private var delta = 0L
     @Volatile private var charsSaved = 0L
-    data class Active(val id: String, val incremental: Boolean, val tools: Boolean, val nativeTools: Boolean)
+    private val localRequests = java.util.concurrent.atomic.AtomicLong(0)
+    private val continuations = java.util.concurrent.atomic.AtomicLong(0)
+    fun countLocal() { localRequests.incrementAndGet() }
+    fun countContinuation() { continuations.incrementAndGet() }
+    data class Active(val id: String, val incremental: Boolean, val tools: Boolean, val nativeTools: Boolean, val localSideQueries: Boolean, val continuation: Boolean)
     data class Plan(val prompt: String, val usedDelta: Boolean)
     private data class Session(val agent: String, val provider: String, val history: List<String>, val toolFingerprint: String, val marker: String?)
 
-    private val supported = setOf("incremental_context", "tool_calls", "native_tool_calls")
+    private val supported = setOf("incremental_context", "tool_calls", "native_tool_calls", "side_queries_local", "continuation")
     private val descriptions = linkedMapOf(
         "persistent_chat" to Pair("Discussion unique", "L’application ne change pas automatiquement de conversation."),
         "incremental_context" to Pair("Contexte incrémental", "Envoie seulement les nouveaux messages si l’historique et le dernier contenu visible correspondent. Réinitialise si tu changes de discussion."),
         "tool_calls" to Pair("Appels d’outils", "Traduit les appels de fonctions OpenAI déclarés par le client."),
+        "continuation" to Pair("Suite des appels coupés", "Demande la suite d’un appel incomplet et ne recolle que si un chevauchement exact et unique le permet ; sinon la requête échoue sans exécuter l’appel."),
+        "side_queries_local" to Pair("Requêtes annexes locales", "Traite uniquement les requêtes d’entretien reconnues sans toucher à la discussion. Les décisions de sécurité et schémas incertains sont refusés."),
         "native_tool_calls" to Pair("Appels natifs", "Reconnaît les blocs JSON d’outils au format natif NEMESIS sans liste d’outils OpenAI."),
         "keepalive" to Pair("Maintien de connexion", "Envoie des événements pendant les générations longues en streaming.")
     )
@@ -49,7 +55,7 @@ class AgentIntegrationManager(context: Context) {
         if (profiles.none { it.first == id }) return null
         synchronized(detected) { val old = detected[id]; detected[id] = System.currentTimeMillis() to ((old?.second ?: 0) + 1) }
         if (!enabled(id)) return null
-        return Active(id, id != "nemesis" && feature(id, "incremental_context"), feature(id, "tool_calls"), id == "nemesis" && feature(id, "native_tool_calls"))
+        return Active(id, id != "nemesis" && feature(id, "incremental_context"), feature(id, "tool_calls"), id == "nemesis" && feature(id, "native_tool_calls"), id != "nemesis" && feature(id, "side_queries_local"), id != "nemesis" && feature(id, "continuation"))
     }
 
     fun update(id: String, body: JSONObject): JSONObject {
@@ -76,7 +82,7 @@ class AgentIntegrationManager(context: Context) {
         val isSupported = true
         val features = JSONArray()
         for ((key, description) in descriptions) {
-            if (id == "nemesis" && key == "incremental_context") continue
+            if (id == "nemesis" && (key == "incremental_context" || key == "side_queries_local" || key == "continuation")) continue
             if (id != "nemesis" && key == "native_tool_calls") continue
             features.put(JSONObject().put("id", key).put("label", description.first)
                 .put("description", if (!isSupported) "En cours de portage sur Android." else description.second + if (key !in supported) " Toujours actif ; non configurable sur Android." else "")
@@ -99,7 +105,7 @@ class AgentIntegrationManager(context: Context) {
         val sessions = JSONObject()
         if (session != null) sessions.put(session.provider.lowercase(Locale.ROOT), JSONObject().put("turns", full + delta).put("messages", session.history.size).put("busy", AutomationCoordinator.isRunning))
         return JSONObject().put("agents", agents).put("clients", JSONArray()).put("discussion_owners", JSONObject())
-            .put("sessions", JSONObject().put("sessions", sessions).put("requests", JSONObject().put("full", full).put("delta", delta)).put("chars_saved", charsSaved))
+            .put("sessions", JSONObject().put("sessions", sessions).put("requests", JSONObject().put("full", full).put("delta", delta).put("local", localRequests.get()).put("continuations", continuations.get())).put("chars_saved", charsSaved))
     }
     fun reset(): Int {
         if (!lock.tryLock()) throw IllegalArgumentException("Une requête est en cours ; réessaie après sa fin.")

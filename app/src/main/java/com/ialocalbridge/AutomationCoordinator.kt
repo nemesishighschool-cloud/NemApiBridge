@@ -17,7 +17,7 @@ class AutomationCoordinator(context: Context) {
     private val appContext = context.applicationContext
     private val providerRepository = ProviderRepository(appContext)
 
-    suspend fun processQuestion(config: ProviderConfig, prompt: String, images: List<ImagePayload.Payload> = emptyList()): String = withContext(Dispatchers.IO) {
+    suspend fun processQuestion(config: ProviderConfig, prompt: String, images: List<ImagePayload.Payload> = emptyList(), detectIncompleteTool: Boolean = false, allowContinuation: Boolean = false, onContinuation: () -> Unit = {}): String = withContext(Dispatchers.IO) {
         if (accepted.incrementAndGet() > MAX_ACCEPTED_REQUESTS) {
             accepted.decrementAndGet()
             throw AutomationException("queue_full", "Une autre requête utilise déjà l’application cible.")
@@ -35,7 +35,17 @@ class AutomationCoordinator(context: Context) {
             }
             running.set(true)
             cancelled.set(false)
-            execute(config, prompt, images, staged)
+            var result = execute(config, prompt, images, staged)
+            var attempts = 0
+            while (detectIncompleteTool && ToolContinuation.isIncomplete(result)) {
+                if (!allowContinuation || attempts >= 4) throw AutomationException("tool_call_incomplete", "L’appel d’outil est incomplet et n’a pas été transmis. Demande au modèle de produire des fichiers plus petits.")
+                attempts++
+                onContinuation()
+                val next = execute(config, ToolContinuation.prompt(result), emptyList(), staged)
+                result = ToolContinuation.stitch(result, next)
+                    ?: throw AutomationException("continuation_ambiguous", "La suite de l’appel d’outil ne correspond pas exactement : aucun appel incomplet n’a été transmis.")
+            }
+            result
         } finally {
             staged.forEach { try { BridgeImageProvider.remove(appContext, it) } catch (e: Exception) { android.util.Log.w("AutomationCoordinator", "Temporary image cleanup failed", e) } }
             if (acquired) {

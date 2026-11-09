@@ -179,7 +179,7 @@ function updateAgent(a, sessions) {
           `${esc(providerLabel(p))} : ${x.turns} tour(s), ${x.messages} msg${x.busy ? " · en cours" : ""}`);
         const r = sessions.requests || {};
         setHTML(box, `${parts.length ? "Sessions actives — " + parts.join(" · ") : "Aucune session active"}<br>`
-          + `Requêtes : ${r.full || 0} complète(s) · ${r.delta || 0} incrémentale(s) · `
+          + `Requêtes : ${r.full || 0} complète(s) · ${r.delta || 0} incrémentale(s) · ${r.local || 0} annexe(s) locale(s) · ${r.continuations || 0} suite(s) · `
           + `caractères économisés : <b>${fmtChars(sessions.chars_saved || 0)}</b>`);
       }
     }

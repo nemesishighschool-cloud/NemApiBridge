@@ -39,14 +39,17 @@ object ToolParser {
         }
         for (m in toolFence.findAll(text)) {
             val body = m.groupValues[2]
-            val blocks = toolBlock.findAll(body).toList()
-            // Do not remove unrelated content from a tool fence.
-            val residual = toolBlock.replace(body, "").trim()
-            if (blocks.isNotEmpty() && residual.isEmpty()) {
-                val calls = blocks.flatMap { jsonCalls(it.groupValues[1]) }
+            val scan = ToolTagScanner.scan(body)
+            val blocks = scan.tags
+            val residual = StringBuilder().apply {
+                var cursor = 0
+                blocks.forEach { append(body, cursor, it.start); cursor = it.end }
+                append(body, cursor, body.length)
+            }.toString().trim()
+            if (scan.incompleteStart == null && blocks.isNotEmpty() && residual.isEmpty()) {
+                val calls = blocks.flatMap { jsonCalls(it.body) }
                 if (calls.size == blocks.size) add(m, calls)
-            } else if (blocks.isEmpty()) {
-                // Some models emit JSON directly inside a dedicated tool fence.
+            } else if (scan.incompleteStart == null && blocks.isEmpty()) {
                 add(m, jsonCalls(body))
             }
         }
@@ -73,18 +76,17 @@ object ToolParser {
             if (parts.isNotEmpty() && parts.size == calls.size) add(m, calls)
         }
         for (m in v3Call.findAll(text)) parseV3(m)?.let { add(m, listOf(it)) }
-        for (m in toolBlock.findAll(text)) {
-            val body = m.groupValues[1]
+        for (tag in ToolTagScanner.scan(text).tags) {
+            val body = tag.body
             val nested = qwenFunc.findAll(body).toList()
             val leftovers = qwenFunc.replace(body, "").trim()
-            if (nested.isNotEmpty() && leftovers.isEmpty()) {
-                val calls = nested.map { item ->
-                    val args = JSONObject()
-                    for (param in qwenParam.findAll(item.groupValues[2])) args.put(param.groupValues[1], xmlValue(param.groupValues[2]))
-                    makeCall(item.groupValues[1], args)
-                }
-                add(m, calls)
-            } else add(m, jsonCalls(body))
+            val calls = if (nested.isNotEmpty() && leftovers.isEmpty()) nested.map { item ->
+                val args = JSONObject()
+                for (param in qwenParam.findAll(item.groupValues[2])) args.put(param.groupValues[1], xmlValue(param.groupValues[2]))
+                makeCall(item.groupValues[1], args)
+            } else jsonCalls(body)
+            if (ordinaryFences.none { tag.start in it } && calls.isNotEmpty() && calls.all { allowedNames == null || it.name in allowedNames })
+                candidates.add(Span(tag.start, tag.end, calls))
         }
         for (m in legacy.findAll(text)) add(m, jsonCalls(m.groupValues[1]))
         for (m in dsmlBlock.findAll(text)) {
@@ -127,7 +129,9 @@ object ToolParser {
 
     private fun jsonCalls(raw: String): List<ParsedToolCall> {
       return try {
-        val value = org.json.JSONTokener(raw.trim()).nextValue()
+        val tokener = org.json.JSONTokener(raw.trim())
+        val value = tokener.nextValue()
+        require(tokener.nextClean() == '\u0000')
         val objects = when (value) {
             is JSONObject -> listOf(value)
             is JSONArray -> (0 until value.length()).map { value.getJSONObject(it) }

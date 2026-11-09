@@ -64,4 +64,14 @@ class ToolParserIntegrationTest {
         val raw = "<|tool_calls_begin|>[{\"name\":\"read\",\"arguments\":{\"path\":\"a\"}}]<|tool_calls_end|>"
         assertEquals("read", ToolParser.parseToolCalls(raw, setOf("read"))!!.toolCalls.single().name)
     }
+    @Test fun literalToolTagsInsideJsonStringsDoNotTruncateOrExecutePartialFiles() {
+        val content = "<tool>literal</tool>\nfunction x() { return \"quoted\\\\path\"; }"
+        val call = JSONObject().put("name", "write_file").put("arguments", JSONObject().put("content", content)).toString()
+        val raw = "```tool\n<tool>$call</tool>\n```"
+        val parsed = ToolParser.parseToolCalls(raw, setOf("write_file"))!!
+        assertEquals(content, JSONObject(parsed.toolCalls.single().arguments).getString("content"))
+        assertFalse(ToolContinuation.isIncomplete(raw))
+        assertNull(ToolParser.parseToolCalls("<tool>$call unexpected</tool>", setOf("write_file")))
+        assertTrue(ToolContinuation.isIncomplete("<tool>$call unexpected</tool>"))
+    }
 }
