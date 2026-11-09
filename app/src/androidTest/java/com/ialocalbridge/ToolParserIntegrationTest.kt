@@ -1,0 +1,49 @@
+package com.ialocalbridge
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.ialocalbridge.utils.ToolParser
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class ToolParserIntegrationTest {
+    @Test fun parsesFencedToolCallWithoutDamagingArguments() {
+        val arg = JSONObject().put("command", "printf '%s' \"\$HOME\" && grep -E '\\d+' file").toString()
+        val raw = "First\n```tool\n<tool>{\"name\":\"run\",\"arguments\":$arg}</tool>\n```\nAfter"
+        val parsed = ToolParser.parseToolCalls(raw, setOf("run"))!!
+        assertEquals("First\n\nAfter", parsed.remainingText)
+        assertEquals("run", parsed.toolCalls.single().name)
+        assertEquals(JSONObject(arg).getString("command"), JSONObject(parsed.toolCalls.single().arguments).getString("command"))
+    }
+    @Test fun parsesMultipleCallsWithDistinctIds() {
+        val raw = "<tool>{\"name\":\"read\",\"arguments\":{\"path\":\"a\"}}</tool>\n<tool>{\"name\":\"read\",\"arguments\":{\"path\":\"b\"}}</tool>"
+        val calls = ToolParser.parseToolCalls(raw, setOf("read"))!!.toolCalls
+        assertEquals(2, calls.size)
+        assertNotEquals(calls[0].id, calls[1].id)
+        assertEquals("b", JSONObject(calls[1].arguments).getString("path"))
+    }
+    @Test fun parsesDeepseekDsmlValues() {
+        val raw = "Intro\n<｜DSML｜tool_calls><｜DSML｜invoke name=\"read\"><｜DSML｜parameter name=\"path\" string=\"true\">a.py</｜DSML｜parameter><｜DSML｜parameter name=\"limit\" string=\"false\">50</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>"
+        val parsed = ToolParser.parseToolCalls(raw, setOf("read"))!!
+        assertEquals("Intro", parsed.remainingText)
+        assertEquals("a.py", JSONObject(parsed.toolCalls.single().arguments).getString("path"))
+        assertEquals(50, JSONObject(parsed.toolCalls.single().arguments).getInt("limit"))
+    }
+    @Test fun refusesUnknownOrMalformedAndLeavesNormalCodeUntouched() {
+        assertNull(ToolParser.parseToolCalls("<tool>{\"name\":\"delete\",\"arguments\":{}}</tool>", setOf("read")))
+        assertNull(ToolParser.parseToolCalls("<tool>{\"name\":\"read\",\"arguments\":[]}</tool>", setOf("read")))
+        assertNull(ToolParser.parseToolCalls("```html\n<tool>{\"name\":\"read\",\"arguments\":{}}</tool>\n```", setOf("read")))
+    }
+    @Test fun parsesJsonInsideToolFenceFromRealDeepSeek() {
+        val raw = "```tool\n{\"name\":\"read_file\",\"arguments\":{\"file_path\":\"main.py\"}}\n```"
+        val parsed = ToolParser.parseToolCalls(raw, setOf("read_file"))!!
+        assertEquals("", parsed.remainingText)
+        assertEquals("main.py", JSONObject(parsed.toolCalls.single().arguments).getString("file_path"))
+    }
+    @Test fun parsesLegacyProtocol() {
+        val raw = "<|tool_calls_begin|>[{\"name\":\"read\",\"arguments\":{\"path\":\"a\"}}]<|tool_calls_end|>"
+        assertEquals("read", ToolParser.parseToolCalls(raw, setOf("read"))!!.toolCalls.single().name)
+    }
+}

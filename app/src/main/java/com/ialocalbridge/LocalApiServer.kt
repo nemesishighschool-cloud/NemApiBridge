@@ -97,7 +97,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             val status = when (e.errorCode) {
                 "queue_full", "queue_timeout" -> Response.Status.SERVICE_UNAVAILABLE
                 "accessibility_disabled", "wrong_app", "selector_missing", "selector_ambiguous",
-                "action_failed", "response_timeout", "response_incomplete", "user_intervention_required", "cancelled" -> Response.Status.CONFLICT
+                "action_failed", "response_timeout", "response_incomplete", "user_intervention_required", "cancelled", "tool_call_required" -> Response.Status.CONFLICT
                 "response_too_large" -> Response.Status.PAYLOAD_TOO_LARGE
                 else -> Response.Status.BAD_REQUEST
             }
@@ -145,7 +145,12 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         totalPromptTokens.addAndGet(promptTokens.toLong())
         totalCompletionTokens.addAndGet(completionTokens.toLong())
 
-        val parsed = if (tools == null || tools.length() == 0 || toolChoice == "none") null else ToolParser.parseToolCalls(result)
+        val parsed = if (tools == null || tools.length() == 0 || toolChoice == "none") null else ToolParser.parseToolCalls(result, (0 until tools.length()).mapNotNull { i -> tools.optJSONObject(i)?.let { (it.optJSONObject("function") ?: it).optString("name") } }.toSet())
+        val requiredName = (toolChoice as? JSONObject)?.optJSONObject("function")?.optString("name")
+        if ((toolChoice == "required" || requiredName != null) &&
+            (parsed == null || parsed.toolCalls.isEmpty() || (requiredName != null && parsed.toolCalls.any { it.name != requiredName }))) {
+            throw AutomationException("tool_call_required", "Le fournisseur n’a pas produit l’appel d’outil demandé dans un format reconnu.")
+        }
         return if (requestedStream) {
             buildStreamResponse(modelName, result, parsed, promptTokens, completionTokens)
         } else {
@@ -206,6 +211,17 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
 
     private fun buildPrompt(messages: JSONArray, maxHistoryChars: Int): String {
         val normalized = mutableListOf<Pair<String, String>>()
+        val callNames = mutableMapOf<String, String>()
+        for (index in 0 until messages.length()) {
+            val calls = messages.optJSONObject(index)?.optJSONArray("tool_calls") ?: continue
+            for (i in 0 until calls.length()) {
+                val call = calls.optJSONObject(i) ?: continue
+                val id = call.optString("id")
+                val name = call.optJSONObject("function")?.optString("name").orEmpty()
+                if (id.isNotBlank() && name.isNotBlank()) callNames[id] = name
+            }
+        }
+        var hasToolResult = false
         for (index in 0 until messages.length()) {
             val message = messages.optJSONObject(index)
                 ?: throw AutomationException("invalid_request", "Chaque message doit être un objet JSON.")
@@ -223,8 +239,14 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                 )
             }
             if (role == "user" && text.isBlank()) continue
-            val toolCalls = message.optJSONArray("tool_calls")?.toString()?.let { "\nAppels d’outils précédents : $it" }.orEmpty()
-            normalized.add(role to "[${ROLE_LABELS[role]}]\n$text$toolCalls")
+            val toolCalls = message.optJSONArray("tool_calls")?.toString()?.let { "\nPrevious tool calls: $it" }.orEmpty()
+            val label = if (role == "tool") {
+                hasToolResult = true
+                val name = callNames[message.optString("tool_call_id")]
+                    ?: message.optString("name").ifBlank { "tool" }
+                "Tool result ($name)"
+            } else ROLE_LABELS[role]
+            normalized.add(role to "$label: $text$toolCalls")
         }
         val latestUserIndex = normalized.indexOfLast { it.first == "user" }
         if (latestUserIndex < 0) {
@@ -250,7 +272,8 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             retained.addFirst(entry)
             retainedChars += entry.length
         }
-        return retained.joinToString("\n\n")
+        val footer = if (hasToolResult) "\n\nContinue using the tool results above. Do not repeat successful tool calls; take the next step or give the final answer." else ""
+        return retained.joinToString("\n\n") + footer
     }
 
     private fun buildJsonResponse(
@@ -634,7 +657,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         private val ROLE_LABELS = mapOf(
             "system" to "Instructions système",
             "developer" to "Instructions développeur",
-            "user" to "Utilisateur",
+            "user" to "User",
             "assistant" to "Assistant",
             "tool" to "Résultat d’outil"
         )

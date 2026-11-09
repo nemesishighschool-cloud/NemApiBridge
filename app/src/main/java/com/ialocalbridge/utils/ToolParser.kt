@@ -2,231 +2,119 @@ package com.ialocalbridge.utils
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 
+/** Strict, lossless subset of the NemApi tool-call contract. */
 object ToolParser {
-    private const val TOOL_CALL_START = "<|tool_calls_begin|>"
-    private const val TOOL_CALL_END = "<|tool_calls_end|>"
-    private var callIdCounter = 0L
+    data class ParsedToolCall(val id: String, val name: String, val arguments: String)
+    data class ToolCallResult(val toolCalls: List<ParsedToolCall>, val remainingText: String)
+    private data class Span(val start: Int, val end: Int, val calls: List<ParsedToolCall>)
 
-    data class ParsedToolCall(
-        val id: String,
-        val name: String,
-        val arguments: String
-    )
+    private val toolBlock = Regex("<tool(?:_call)?>([\\s\\S]*?)</tool(?:_call)?>", RegexOption.IGNORE_CASE)
+    private val toolFence = Regex("(?m)^[ \\t]*(`{3,}|~{3,})[ \\t]*(?:tool|tool_call)[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n[ \\t]*\\1[ \\t]*(?=\\r?$)", RegexOption.IGNORE_CASE)
+    private val legacy = Regex("<\\|tool_calls_begin\\|>([\\s\\S]*?)<\\|tool_calls_end\\|>", RegexOption.IGNORE_CASE)
+    private val dsmlBlock = Regex("<\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*(?:tool_calls|function_calls|calls)\\s*>([\\s\\S]*?)<\\s*/\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*(?:tool_calls|function_calls|calls)\\s*>", RegexOption.IGNORE_CASE)
+    private val dsmlInvoke = Regex("<\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*invoke\\s+name\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>([\\s\\S]*?)<\\s*/\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*invoke\\s*>", RegexOption.IGNORE_CASE)
+    private val dsmlParameter = Regex("<\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*parameter\\s+name\\s*=\\s*[\"']([^\"']+)[\"']([^>]*)>([\\s\\S]*?)<\\s*/\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*parameter\\s*>", RegexOption.IGNORE_CASE)
+    private val stringFalse = Regex("\\bstring\\s*=\\s*[\"']false[\"']", RegexOption.IGNORE_CASE)
 
-    data class ToolCallResult(
-        val toolCalls: List<ParsedToolCall>,
-        val remainingText: String
-    )
-
-    private fun nextCallId(): String {
-        callIdCounter++
-        return "call_$callIdCounter"
-    }
-
-    fun parseToolCalls(text: String): ToolCallResult? {
-        val normalized = text.replace('\uff5c', '|').replace('\u2581', '_')
-        val startIdx = findTagStart(normalized)
-        if (startIdx < 0) return null
-        val endIdx = normalized.indexOf(TOOL_CALL_END, startIdx)
-        if (endIdx < 0) return null
-        val inner = normalized.substring(startIdx + TOOL_CALL_START.length, endIdx)
-        val calls = extractCalls(inner)
-        if (calls.isEmpty()) return null
-        val remaining = normalized.substring(0, startIdx) + normalized.substring(endIdx + TOOL_CALL_END.length)
-        return ToolCallResult(calls, remaining)
-    }
-
-    fun repairJsonString(raw: String): String {
-        var s = repairInvalidBackslashes(raw)
-        s = repairUnquotedKeys(s)
-        s = balanceBrackets(s)
-        return s
-    }
-
-    private fun findTagStart(text: String): Int {
-        val variants = listOf(TOOL_CALL_START, "<tool_calls>")
-        var best = -1
-        for (v in variants) {
-            val idx = text.indexOf(v)
-            if (idx >= 0 && (best < 0 || idx < best)) best = idx
+    /** Unknown names and malformed JSON remain visible instead of being executed or silently altered. */
+    fun parseToolCalls(text: String, allowedNames: Set<String>? = null): ToolCallResult? {
+        val candidates = mutableListOf<Span>()
+        val ordinaryFences = Regex("(?m)^[ \\t]*(`{3,}|~{3,})[^\\r\\n]*\\r?\\n[\\s\\S]*?\\r?\\n[ \\t]*\\1[ \\t]*(?=\\r?$)")
+            .findAll(text).filter { !it.value.substringBefore('\n').trim().matches(Regex("(?:`{3,}|~{3,})[ \\t]*(?:tool|tool_call)[ \\t]*", RegexOption.IGNORE_CASE)) }.map { it.range }.toList()
+        fun add(m: MatchResult, calls: List<ParsedToolCall>) {
+            if (ordinaryFences.any { m.range.first in it }) return
+            if (calls.isNotEmpty() && calls.all { allowedNames == null || it.name in allowedNames }) {
+                candidates.add(Span(m.range.first, m.range.last + 1, calls))
+            }
         }
-        return best
-    }
-
-    private fun extractCalls(inner: String): List<ParsedToolCall> {
+        for (m in toolFence.findAll(text)) {
+            val body = m.groupValues[2]
+            val blocks = toolBlock.findAll(body).toList()
+            // Do not remove unrelated content from a tool fence.
+            val residual = toolBlock.replace(body, "").trim()
+            if (blocks.isNotEmpty() && residual.isEmpty()) {
+                val calls = blocks.flatMap { jsonCalls(it.groupValues[1]) }
+                if (calls.size == blocks.size) add(m, calls)
+            } else if (blocks.isEmpty()) {
+                // Some models emit JSON directly inside a dedicated tool fence.
+                add(m, jsonCalls(body))
+            }
+        }
+        for (m in toolBlock.findAll(text)) add(m, jsonCalls(m.groupValues[1]))
+        for (m in legacy.findAll(text)) add(m, jsonCalls(m.groupValues[1]))
+        for (m in dsmlBlock.findAll(text)) {
+            val invocations = dsmlInvoke.findAll(m.groupValues[1]).toList()
+            val calls = invocations.mapNotNull(::parseDsml)
+            if (invocations.isNotEmpty() && calls.size == invocations.size) add(m, calls)
+        }
+        val spans = candidates.sortedWith(compareBy<Span> { it.start }.thenByDescending { it.end })
+        if (spans.isEmpty()) return null
+        val result = StringBuilder()
         val calls = mutableListOf<ParsedToolCall>()
-        if (inner.contains("<invoke ")) {
-            calls.addAll(extractInvokeCalls(inner))
+        var cursor = 0
+        for (span in spans) {
+            if (span.start < cursor) continue
+            result.append(text, cursor, span.start)
+            calls.addAll(span.calls)
+            cursor = span.end
         }
-        if (calls.isEmpty()) {
-            calls.addAll(extractJsonCalls(inner))
-        }
-        if (calls.isEmpty()) {
-            calls.addAll(extractXmlCalls(inner))
-        }
-        return calls
+        result.append(text, cursor, text.length)
+        return ToolCallResult(calls, result.toString().trim())
     }
 
-    private fun extractInvokeCalls(inner: String): List<ParsedToolCall> {
-        val calls = mutableListOf<ParsedToolCall>()
-        val invokePattern = "<invoke name=\"([^\"]+)\">([\\s\\S]*?)</invoke>"
-        val regex = Regex(invokePattern)
-        regex.findAll(inner).forEach { match ->
-            val name = match.groupValues[1]
-            val rawArgs = match.groupValues[2].trim()
-            val args = try {
-                JSONObject(rawArgs).toString()
-            } catch (e: Exception) {
-                repairJsonString(rawArgs)
+    private fun jsonCalls(raw: String): List<ParsedToolCall> {
+      return try {
+        val value = org.json.JSONTokener(raw.trim()).nextValue()
+        val objects = when (value) {
+            is JSONObject -> listOf(value)
+            is JSONArray -> (0 until value.length()).map { value.getJSONObject(it) }
+            else -> return emptyList()
+        }
+        objects.map { obj ->
+            val fn = obj.optJSONObject("function") ?: obj
+            val name = fn.optString("name").trim()
+            require(name.isNotEmpty())
+            val valueArgs = fn.opt("arguments") ?: JSONObject()
+            val args = when (valueArgs) {
+                is JSONObject -> valueArgs
+                is String -> JSONObject(valueArgs)
+                else -> throw IllegalArgumentException("arguments must be an object")
             }
-            calls.add(ParsedToolCall(nextCallId(), name, args))
+            ParsedToolCall("call_" + UUID.randomUUID().toString().replace("-", ""), name, args.toString())
         }
-        return calls
+      } catch (_: Exception) { emptyList() }
     }
 
-    private fun extractJsonCalls(inner: String): List<ParsedToolCall> {
-        val calls = mutableListOf<ParsedToolCall>()
-        val trimmed = inner.trim()
-        if (trimmed.startsWith("[")) {
-            try {
-                val arr = JSONArray(trimmed)
-                for (i in 0 until arr.length()) {
-                    val obj = arr.getJSONObject(i)
-                    val name = obj.optString("name", obj.optString("function", ""))
-                    val args = if (obj.has("arguments")) {
-                        val a = obj.get("arguments")
-                        if (a is String) a else a.toString()
-                    } else "{}"
-                    calls.add(ParsedToolCall(nextCallId(), name, args))
-                }
-            } catch (e: Exception) {
-                val repaired = repairJsonString(trimmed)
-                try {
-                    val arr = JSONArray(repaired)
-                    for (i in 0 until arr.length()) {
-                        val obj = arr.getJSONObject(i)
-                        val name = obj.optString("name", "")
-                        val args = obj.optString("arguments", "{}")
-                        calls.add(ParsedToolCall(nextCallId(), name, args))
-                    }
-                } catch (_: Exception) {}
-            }
-        } else if (trimmed.startsWith("{")) {
-            try {
-                val obj = JSONObject(trimmed)
-                val name = obj.optString("name", "")
-                val args = obj.optString("arguments", "{}")
-                calls.add(ParsedToolCall(nextCallId(), name, args))
-            } catch (_: Exception) {}
+    private fun parseDsml(m: MatchResult): ParsedToolCall? = try {
+        val args = JSONObject()
+        for (p in dsmlParameter.findAll(m.groupValues[2])) {
+            val value = p.groupValues[3]
+            if (stringFalse.containsMatchIn(p.groupValues[2])) {
+                args.put(p.groupValues[1], org.json.JSONTokener(value.trim()).nextValue())
+            } else args.put(p.groupValues[1], value)
         }
-        return calls
-    }
-
-    private fun extractXmlCalls(inner: String): List<ParsedToolCall> {
-        val calls = mutableListOf<ParsedToolCall>()
-        val xmlPattern = "<tool_call>\\s*<name>([\\s\\S]*?)</name>\\s*<arguments>([\\s\\S]*?)</arguments>\\s*</tool_call>"
-        val regex = Regex(xmlPattern)
-        regex.findAll(inner).forEach { match ->
-            val name = match.groupValues[1].trim()
-            val rawArgs = match.groupValues[2].trim()
-            val args = try {
-                JSONObject(rawArgs).toString()
-            } catch (e: Exception) {
-                repairJsonString(rawArgs)
-            }
-            calls.add(ParsedToolCall(nextCallId(), name, args))
-        }
-        return calls
-    }
-
-    private fun repairInvalidBackslashes(s: String): String {
-        val sb = StringBuilder()
-        var i = 0
-        val validEscapes = setOf('"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u')
-        while (i < s.length) {
-            val c = s[i]
-            if (c == '\\' && i + 1 < s.length) {
-                val next = s[i + 1]
-                if (next in validEscapes) {
-                    sb.append('\\').append(next)
-                    i += 2
-                } else {
-                    sb.append("\\\\").append(next)
-                    i += 2
-                }
-            } else {
-                sb.append(c)
-                i++
-            }
-        }
-        return sb.toString()
-    }
-
-    private fun repairUnquotedKeys(s: String): String {
-        val sb = StringBuilder()
-        var i = 0
-        while (i < s.length) {
-            if ((s[i] == '{' || s[i] == ',') && i + 1 < s.length) {
-                sb.append(s[i])
-                i++
-                while (i < s.length && s[i].isWhitespace()) { sb.append(s[i]); i++ }
-                if (i < s.length && (s[i].isLetter() || s[i] == '_')) {
-                    val keyStart = i
-                    while (i < s.length && (s[i].isLetterOrDigit() || s[i] == '_')) i++
-                    if (i < s.length && s[i] == ':') {
-                        sb.append('"').append(s.substring(keyStart, i)).append('"')
-                    } else {
-                        sb.append(s.substring(keyStart, i))
-                    }
-                }
-            } else {
-                sb.append(s[i])
-                i++
-            }
-        }
-        return sb.toString()
-    }
-
-    private fun balanceBrackets(s: String): String {
-        var depth = 0
-        var inString = false
-        var escaped = false
-        for (c in s) {
-            if (escaped) { escaped = false; continue }
-            if (c == '\\') { escaped = true; continue }
-            if (c == '"') { inString = !inString; continue }
-            if (inString) continue
-            if (c == '{' || c == '[') depth++
-            if (c == '}' || c == ']') depth--
-        }
-        var result = s
-        while (depth > 0) {
-            result += if (result.contains('[') && !result.contains(']')) "]" else "}"
-            depth--
-        }
-        return result
-    }
+        ParsedToolCall("call_" + UUID.randomUUID().toString().replace("-", ""), m.groupValues[1], args.toString())
+    } catch (_: Exception) { null }
 
     fun buildToolCallPrompt(tools: JSONArray): String {
-        val sb = StringBuilder()
-        sb.append("You have access to the following tools:\n\n")
+        val names = mutableSetOf<String>()
+        val lines = mutableListOf<String>()
         for (i in 0 until tools.length()) {
             val tool = tools.getJSONObject(i)
-            val func = tool.optJSONObject("function") ?: tool
-            val name = func.optString("name", "tool_$i")
-            val desc = func.optString("description", "")
-            val params = func.optJSONObject("parameters")?.toString(2) ?: "{}"
-            sb.append("## $name\n")
-            sb.append("Description: $desc\n")
-            sb.append("Parameters: $params\n\n")
+            require(!tool.has("type") || tool.optString("type") == "function")
+            val fn = tool.optJSONObject("function") ?: tool
+            val name = fn.getString("name").trim()
+            require(name.isNotEmpty() && names.add(name))
+            lines.add(fn.toString())
         }
-        sb.append("To call a tool, use the following format:\n")
-        sb.append(TOOL_CALL_START)
-        sb.append("\n")
-        sb.append("[{\"name\": \"tool_name\", \"arguments\": {...}}]\n")
-        sb.append(TOOL_CALL_END)
-        sb.append("\n")
-        return sb.toString()
+        return """You have access to the following tools. To call a tool, emit one fenced block per call, exactly as follows:
+```tool
+<tool>{"name":"tool_name","arguments":{"argument":"value"}}</tool>
+```
+The name must be one of the tools below; arguments must be a valid JSON object. Preserve exact strings, including backslashes. If no tool is needed, answer normally. Do not invent a tool result.
+Available tools:
+${lines.joinToString("\n")}"""
     }
 }
