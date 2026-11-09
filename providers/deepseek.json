@@ -51,11 +51,17 @@
     ],
     "allow_input_gesture": true,
     "allow_reconstruction_gesture": true,
-    "detect_identical_responses": true
+    "detect_identical_responses": true,
+    "copy_response": [
+      {
+        "by": "content_description",
+        "value": "Copy"
+      }
+    ]
   },
   "timeouts": {
     "element_ms": 10000,
-    "response_ms": 180000,
+    "response_ms": 600000,
     "poll_interval_ms": 750,
     "stable_polls": 3
   },

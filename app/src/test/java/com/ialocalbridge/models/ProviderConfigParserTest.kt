@@ -105,6 +105,7 @@ class ProviderConfigParserTest {
               "selectors": {
                 "input": [{"by": "class_name", "value": "android.widget.EditText"}],
                 "input_activation": [{"by": "text", "value": "Type a message"}],
+                "copy_response": [{"by": "content_description", "value": "Copy"}],
                 "allow_input_gesture": true,
                 "detect_identical_responses": true,
                 "allow_reconstruction_gesture": true,
@@ -125,6 +126,7 @@ class ProviderConfigParserTest {
         assertEquals("Type a message", config.selectors.inputActivation.single().value)
         assertEquals(true, config.selectors.allowInputGesture)
         assertEquals(true, config.selectors.detectIdenticalResponses)
+        assertEquals("Copy", config.selectors.copyResponse.single().value)
     }
 
     @Test
@@ -147,6 +149,18 @@ class ProviderConfigParserTest {
             assistantMessage = listOf(UiSelector("text", "Copy")), allowInputGesture = true
         ))
         assertThrows(IllegalArgumentException::class.java) { ProviderConfigParser.validate(noActivation) }
+    }
+
+    @Test fun oldProviderDoesNotEnableClipboardByDefault() {
+        val config = ProviderConfigParser.parse("""{"provider":"Legacy","package_name":"com.example.ai","selectors":{"input":[{"by":"text","value":"input"}],"send":[{"by":"text","value":"send"}],"assistant_message":[{"by":"text","value":"answer"}]}}""")
+        assertEquals(emptyList<UiSelector>(), config.selectors.copyResponse)
+    }
+
+    @Test fun invalidClipboardSelectorIsRejected() {
+        val config = ProviderConfig(provider = "Test", packageName = "com.example.ai", selectors = ProviderSelectors(
+            input = listOf(UiSelector("text", "input")), send = listOf(UiSelector("text", "send")),
+            assistantMessage = listOf(UiSelector("text", "answer")), copyResponse = listOf(UiSelector("coordinates", "1,2"))))
+        assertThrows(IllegalArgumentException::class.java) { ProviderConfigParser.validate(config) }
     }
 
 }

@@ -95,25 +95,22 @@ class AutomationCoordinator(context: Context) {
             // Some apps only create the send control after the input is non-empty.
             val send = awaitNode(service, config, config.selectors.send, "send")
             withContext(Dispatchers.Main.immediate) {
-                try { service.click(send, "send") } finally { send.recycle() }
+                try {
+                    if (service.hasAnyMatch(config.packageName, config.selectors.generating)) {
+                        throw AutomationException("user_intervention_required", "Une génération est déjà en cours dans l’application cible.")
+                    }
+                    service.click(send, "send")
+                } finally { send.recycle() }
             }
 
             val startedAt = System.currentTimeMillis()
             var lastObserved = ""
             var stablePolls = 0
-            var sawSubmittedPrompt = false
             var sawGenerating = false
 
             while (System.currentTimeMillis() - startedAt < config.timeouts.responseMs) {
                 if (cancelled.get()) {
                     throw AutomationException("cancelled", "La requête a été arrêtée.")
-                }
-                // Observe the submitted prompt before scrolling: a long answer may
-                // virtualize it later, when its response anchor finally appears.
-                if (!sawSubmittedPrompt && baseline != null) {
-                    sawSubmittedPrompt = withContext(Dispatchers.Main.immediate) {
-                        service.hasNewSubmittedPrompt(config.packageName, prompt, baseline)
-                    }
                 }
                 delay(config.timeouts.pollIntervalMs)
 
@@ -139,7 +136,10 @@ class AutomationCoordinator(context: Context) {
                 val newByIdentity = if ((resemblesPrevious || initialScrollMissing) && baseline != null && answer.isNotBlank()) {
                     withContext(Dispatchers.Main.immediate) {
                         service.hasNewAnswerAfterPrompt(config.packageName, config.selectors.assistantMessage, prompt, baseline) ||
-                            (sawSubmittedPrompt && sawGenerating && service.hasNewAnswerIdentity(config.packageName, config.selectors.assistantMessage, baseline))
+                            // Generation was absent just before the send click; an
+                            // observed generation and a new response identity can
+                            // establish freshness even if the prompt was virtualized.
+                            (sawGenerating && service.hasNewAnswerIdentity(config.packageName, config.selectors.assistantMessage, baseline))
                     }
                 } else false
                 val candidateIsNew = ResponseIdentityPolicy.isNew(answer, initialAnswer, initialScrollMissing, newByIdentity)
@@ -151,6 +151,9 @@ class AutomationCoordinator(context: Context) {
                         stablePolls = 0
                     }
                     if (!isGenerating && stablePolls >= config.timeouts.stablePolls) {
+                        if (config.selectors.copyResponse.isNotEmpty()) {
+                            return service.copyLatestResponse(config)
+                        }
                         return readCompleteResponse(service, config, initialScrollMissing)
                     }
                 } else {
@@ -238,7 +241,7 @@ class AutomationCoordinator(context: Context) {
         validateVisibleAnswer: Boolean = true
     ): Boolean {
         if (config.selectors.scrollToEnd.isEmpty()) return false
-        repeat(40) {
+        repeat(MAX_SCROLL_STEPS) {
             if (cancelled.get()) throw AutomationException("cancelled", "La requête a été arrêtée.")
             val moved = withContext(Dispatchers.Main.immediate) {
                 try {
@@ -312,6 +315,8 @@ class AutomationCoordinator(context: Context) {
     }
 
     companion object {
+        // Finite bound to avoid runaway loops if an app misreports scrolling.
+        private const val MAX_SCROLL_STEPS = 600
         private const val MAX_PROMPT_CHARS = 100_000
         private const val MAX_ACCEPTED_REQUESTS = 2
         private const val QUEUE_WAIT_MS = 15_000L

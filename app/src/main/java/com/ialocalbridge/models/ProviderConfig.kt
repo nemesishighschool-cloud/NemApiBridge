@@ -19,6 +19,8 @@ data class ProviderSelectors(
     val input: List<UiSelector> = emptyList(),
     @SerializedName("input_activation")
     val inputActivation: List<UiSelector> = emptyList(),
+    @SerializedName("copy_response")
+    val copyResponse: List<UiSelector> = emptyList(),
     @SerializedName("allow_input_gesture")
     val allowInputGesture: Boolean = false,
     @SerializedName("allow_reconstruction_gesture")
@@ -119,6 +121,7 @@ object ProviderConfigParser {
         val assistantMessages = requireNotNull(selectors.assistantMessage) {
             "La liste selectors.assistant_message est invalide."
         }
+        val copyResponse = requireNotNull(selectors.copyResponse) { "La liste selectors.copy_response est invalide." }
         val generating = requireNotNull(selectors.generating) { "La liste selectors.generating est invalide." }
         val stop = requireNotNull(selectors.stop) { "La liste selectors.stop est invalide." }
         require(!selectors.allowInputGesture || activation.isNotEmpty()) { "allow_input_gesture nécessite input_activation." }
@@ -134,7 +137,7 @@ object ProviderConfigParser {
         require(safeAssistantMessages.none { it.reconstructClipped && (!it.rejectClipped || !it.textOnly || scrollToEnd.isEmpty()) }) {
             "reconstruct_clipped nécessite reject_clipped, text_only et scroll_to_end."
         }
-        val allSelectors = input + activation + send + assistantMessages + generating + stop + scrollToEnd
+        val allSelectors = input + activation + send + assistantMessages + copyResponse + generating + stop + scrollToEnd
         allSelectors.forEach { selector ->
             val nonNullSelector = requireNotNull(selector) { "Un sélecteur est null." }
             val by = requireNotNull(nonNullSelector.by) { "Le champ by d’un sélecteur est requis." }

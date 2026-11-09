@@ -145,7 +145,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         totalPromptTokens.addAndGet(promptTokens.toLong())
         totalCompletionTokens.addAndGet(completionTokens.toLong())
 
-        val parsed = if (toolChoice == "none") null else ToolParser.parseToolCalls(result)
+        val parsed = if (tools == null || tools.length() == 0 || toolChoice == "none") null else ToolParser.parseToolCalls(result)
         return if (requestedStream) {
             buildStreamResponse(modelName, result, parsed, promptTokens, completionTokens)
         } else {

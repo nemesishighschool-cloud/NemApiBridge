@@ -89,7 +89,7 @@ Les routes API hors `/health` nécessitent la clé uniquement si l’option Andr
 - Le streaming SSE est **simulé** : la réponse complète est d’abord lue dans l’application, puis découpée en événements SSE ; ce n’est pas un flux de tokens natif.
 - Le provider DeepSeek fourni a été testé avec DeepSeek 2.7.5 en anglais sur émulateur Android 13, y compris des réponses longues et le chat web. Autres versions, langues et téléphones physiques restent à valider. Voir [`providers/README.md`](providers/README.md).
 - Le service d’accessibilité, la connexion au compte et les permissions sont activés par l’utilisateur. Les restrictions Android, la mise en veille et les optimisations batterie peuvent interrompre le fonctionnement.
-- Des réponses longues ou virtualisées peuvent être impossibles à reconstruire sans ambiguïté ; le serveur doit alors signaler une erreur plutôt que d’inventer une réponse.
+- Le provider DeepSeek v1.0.2 peut copier la réponse entière dans le presse-papiers Android ; l’ancien contenu est remplacé et la réponse y reste accessible. Des applications en arrière-plan peuvent lire le presse-papiers sur Android avant 10. La copie et la fidélité dépendent de DeepSeek et d’Android ; si la copie ne peut pas être vérifiée, une erreur est renvoyée. Arrêtez le serveur, puis réimportez le JSON de la v1.0.2 sous le nom `DeepSeek` pour activer ce mode.
 
 ## Développement et signature
 

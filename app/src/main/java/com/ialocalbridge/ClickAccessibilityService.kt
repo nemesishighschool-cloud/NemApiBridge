@@ -381,6 +381,74 @@ class ClickAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Copy a complete answer via a provider-supplied selector. This intentionally
+     * overwrites the global clipboard; it is not a private channel on Android. */
+    suspend fun copyLatestResponse(config: com.ialocalbridge.models.ProviderConfig): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+        val packageName = config.packageName
+        suspend fun awaitTarget() {
+            val deadline = android.os.SystemClock.elapsedRealtime() + 3_000L
+            while (currentPackageName() != packageName && android.os.SystemClock.elapsedRealtime() < deadline) kotlinx.coroutines.delay(100)
+            if (currentPackageName() != packageName) throw AutomationException("wrong_app", "L’application cible n’est plus au premier plan.")
+        }
+        awaitTarget()
+        if (hasAnyMatch(packageName, config.selectors.generating)) throw AutomationException("response_incomplete", "La génération est encore en cours.")
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val marker = "NEM_WAIT_" + java.util.UUID.randomUUID().toString()
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NemApiBridge", marker))
+        // Verify that the marker was actually installed before trusting any
+        // later clipboard content, avoiding a stale answer if copying fails.
+        readFocusedClipboard(clipboard, marker, expectMarker = true)
+        awaitTarget()
+        if (hasAnyMatch(packageName, config.selectors.generating)) throw AutomationException("response_incomplete", "La génération est encore en cours.")
+        val anchor = findLatestNode(packageName, config.selectors.copyResponse, "copy_response")
+        try { click(anchor, "copy_response") } finally { anchor.recycle() }
+        val result = readFocusedClipboard(clipboard, marker, expectMarker = false)
+        awaitTarget()
+        if (result.length > MAX_RESPONSE_TEXT_CHARS) throw AutomationException("response_too_large", "La réponse copiée dépasse la limite de lecture.")
+        result
+    }
+
+    /** A visible focusable accessibility overlay permits clipboard access on
+     * Android 10+ without saved coordinates or a background Activity launch. */
+    private suspend fun readFocusedClipboard(clipboard: android.content.ClipboardManager, marker: String, expectMarker: Boolean): String {
+        val manager = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
+        val banner = android.widget.TextView(this).apply {
+            text = "NemApiBridge : lecture de la réponse copiée…"
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(android.graphics.Color.rgb(31, 38, 50))
+            setPadding(20, 14, 20, 14)
+            isFocusable = true
+            isFocusableInTouchMode = true
+        }
+        val params = android.view.WindowManager.LayoutParams(
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+            android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            android.graphics.PixelFormat.TRANSLUCENT
+        ).apply { gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL }
+        var added = false
+        try {
+            manager.addView(banner, params)
+            added = true
+            banner.requestFocus()
+            val deadline = android.os.SystemClock.elapsedRealtime() + 8_000L
+            while (android.os.SystemClock.elapsedRealtime() < deadline) {
+                if (banner.hasWindowFocus()) {
+                    val clip = clipboard.primaryClip
+                    if (clip != null && clip.itemCount == 1) {
+                        val text = clip.getItemAt(0).text?.toString()
+                        if (!text.isNullOrEmpty() && ((text == marker) == expectMarker)) return text
+                    }
+                }
+                kotlinx.coroutines.delay(100)
+            }
+            throw AutomationException("response_incomplete", "Impossible de vérifier la copie de la réponse dans le presse-papiers.")
+        } finally {
+            if (added) manager.removeViewImmediate(banner)
+        }
+    }
+
     fun setText(node: AccessibilityNodeInfo, text: String) {
         if (!node.isEnabled || !node.isEditable) {
             throw AutomationException("action_failed", "Le champ de saisie trouvé n’est pas modifiable.")
@@ -523,7 +591,7 @@ class ClickAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "ClickAccessibility"
         private const val MAX_ACCESSIBILITY_NODES = 2_000
-        private const val MAX_RESPONSE_TEXT_CHARS = 100_000
+        private const val MAX_RESPONSE_TEXT_CHARS = 500_000
 
         @Volatile
         var instance: ClickAccessibilityService? = null

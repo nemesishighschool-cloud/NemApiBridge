@@ -278,3 +278,7 @@ Les providers importés et la clé sont stockés dans les préférences privées
 | P8 | Uploads et providers supplémentaires | Upload existant conservé; adaptations propres à chaque app restent à configurer |
 
 Validation sur émulateur Android 13 : `testDebugUnitTest` et `assembleDebug` réussissent avec JDK 17. Des échanges courts consécutifs et des réponses longues mono-nœud et multi-blocs avec DeepSeek Android 2.7.5 ont réussi via `/v1/chat/completions`. Le champ au repos ne fournit pas de clic accessible ; l’adaptateur active donc explicitement un geste calculé depuis ses limites. La reconstruction des réponses longues refuse les cas ambigus mais ne constitue pas une garantie générale ; voir `providers/README.md`. Les tests sur téléphone physique restent à effectuer.
+
+### Copie de réponse facultative (v1.0.2)
+
+Un provider peut explicitement définir `copy_response` pour activer l’action de copie de la réponse entière, puis lire son texte via une fenêtre d’accessibilité focalisée. Un marqueur aléatoire est écrit et vérifié avant l’action, puis la copie est rejetée si le presse-papiers ne change pas. Cette protection écarte une ancienne valeur mais ne peut authentifier l’origine d’une modification concurrente par une autre application. Le presse-papiers est écrasé et reste partagé par le système. Les providers sans `copy_response` conservent le lecteur historique. Android et l’application cible peuvent limiter la taille ou la fidélité de la copie.
