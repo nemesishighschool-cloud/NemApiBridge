@@ -73,6 +73,13 @@ class AutomationCoordinator(context: Context) {
         withContext(Dispatchers.Main.immediate) {
             service.configureTarget(config.packageName)
         }
+        // Never alter the input of a generation that belongs to another request
+        // or was left running after its HTTP client disconnected.
+        withContext(Dispatchers.Main.immediate) {
+            service.requireTargetForeground(config.packageName)
+            if (service.hasAnyMatch(config.packageName, config.selectors.generating))
+                throw AutomationException("user_intervention_required", "Une génération est déjà en cours dans l’application cible.")
+        }
         // A short conversation can have no scroll container at all. If so,
         // verify new prompt/answer ordering before accepting any reply and
         // reject an existing answer unless it is wholly inside the viewport.

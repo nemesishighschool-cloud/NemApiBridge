@@ -7,11 +7,13 @@ import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Android agent profiles and conservative in-memory incremental conversation tracking. */
 class AgentIntegrationManager(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("nem_agent_integrations_v1", Context.MODE_PRIVATE)
     private val lock = ReentrantLock()
+    private val accepted = AtomicInteger(0)
     @Volatile private var state: Session? = null
     private val detected = mutableMapOf<String, Pair<Long, Int>>()
     @Volatile private var full = 0L
@@ -104,8 +106,14 @@ class AgentIntegrationManager(context: Context) {
         return try { val count = if (state == null) 0 else 1; state = null; count } finally { lock.unlock() }
     }
     fun <T> serialized(block: () -> T): T {
-        if (!lock.tryLock(15, TimeUnit.SECONDS)) throw AutomationException("queue_timeout", "La requête a expiré en attendant la file d’automatisation.")
-        return try { block() } finally { lock.unlock() }
+        if (accepted.incrementAndGet() > 2) {
+            accepted.decrementAndGet()
+            throw AutomationException("queue_full", "Une autre requête utilise déjà l’application cible.")
+        }
+        try {
+            if (!lock.tryLock(15, TimeUnit.SECONDS)) throw AutomationException("queue_timeout", "La requête a expiré en attendant la file d’automatisation.")
+            return try { block() } finally { lock.unlock() }
+        } finally { accepted.decrementAndGet() }
     }
     fun plan(active: Active?, provider: String, messages: JSONArray, tools: JSONArray?, marker: String?, fullPrompt: String, makeDelta: (JSONArray) -> String): Plan {
         if (active == null || !active.incremental) { state = null; return Plan(fullPrompt, false) }
