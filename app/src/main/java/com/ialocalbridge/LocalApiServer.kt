@@ -287,10 +287,11 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                 agentIntegrations.countLocal()
                 if (local.error != null) throw AutomationException("side_query_not_answered", local.error)
                 val done = CompletionData(local.text, local.calls, 0, 0)
-                return if (requestedStream) {
+                val localResponse = if (requestedStream) {
                     if (responseMode) buildResponsesStream(modelName) { done } else buildStreamResponse(modelName) { done }
                 } else if (responseMode) nemJson(responsesOutput(ResponsesCodec.newResponseId(), modelName, done))
                 else buildJsonResponse(modelName, done.result, done.parsed, 0, 0)
+                return localResponse.also { addIgnoredParameterWarning(it, incoming) }
             }
         }
         val historyPrompt = buildPrompt(messages, config.maxHistoryChars, rejectHistoryTruncation = imagePayload.images.isNotEmpty() || agent != null)
@@ -370,13 +371,19 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             throw e
           }
         }
-        return if (requestedStream) {
+        val completionResponse = if (requestedStream) {
             if (responseMode) buildResponsesStream(modelName, ::complete) else buildStreamResponse(modelName, ::complete)
         } else {
             val done = complete()
             if (responseMode) nemJson(responsesOutput(ResponsesCodec.newResponseId(), modelName, done))
             else buildJsonResponse(modelName, done.result, done.parsed, done.promptTokens, done.completionTokens)
         }
+        return completionResponse.also { addIgnoredParameterWarning(it, incoming) }
+    }
+
+    private fun addIgnoredParameterWarning(response: Response, request: JSONObject) {
+        val ignored = RequestParameterAudit.ignoredFields(request)
+        if (ignored.isNotEmpty()) response.addHeader("X-NemApi-Ignored-Parameters", ignored.joinToString(", "))
     }
 
     private data class CompletionData(val result: String, val parsed: ToolParser.ToolCallResult?, val promptTokens: Int, val completionTokens: Int)
@@ -985,6 +992,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         response.addHeader("Access-Control-Allow-Origin", "*")
         response.addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         response.addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-NemApi-Agent")
+        response.addHeader("Access-Control-Expose-Headers", "X-NemApi-Ignored-Parameters")
         response.addHeader("Cache-Control", "no-store")
     }
 

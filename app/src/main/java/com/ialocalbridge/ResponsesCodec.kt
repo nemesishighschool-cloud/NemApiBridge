@@ -122,7 +122,7 @@ object ResponsesCodec {
             .put("status", "completed").put("model", model).put("output", output).put("parallel_tool_calls", true)
             .put("tool_choice", "auto").put("tools", JSONArray()).put("error", JSONObject.NULL)
             .put("incomplete_details", JSONObject.NULL).put("instructions", JSONObject.NULL).put("metadata", JSONObject())
-            .put("temperature", 1.0).put("top_p", 1.0).put("max_output_tokens", JSONObject.NULL)
+            .put("temperature", JSONObject.NULL).put("top_p", JSONObject.NULL).put("max_output_tokens", JSONObject.NULL)
             .put("previous_response_id", JSONObject.NULL).put("reasoning", JSONObject().put("effort", JSONObject.NULL).put("summary", JSONObject.NULL))
             .put("store", false).put("truncation", "disabled")
             .put("usage", JSONObject().put("input_tokens", promptTokens).put("input_tokens_details", JSONObject().put("cached_tokens", 0))
