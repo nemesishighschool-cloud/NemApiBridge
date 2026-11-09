@@ -85,6 +85,8 @@ Les routes API hors `/health` nécessitent la clé uniquement si l’option Andr
 
 ## Comportement et limites
 
+Sur la branche de développement, le service essaie de masquer le clavier juste après l’envoi lorsqu’il détecte une fenêtre de clavier ; il évite l’action système Retour et rétablit le mode de clavier précédent. Cette modification n’est pas incluse dans l’APK v1.0.2 publié. Le comportement dépend du clavier et de l’appareil.
+
 - Une opération d’automatisation à la fois et une en attente au maximum. Les erreurs de cible, de sélecteur, de délai ou de surcharge sont explicites.
 - Le streaming SSE est **simulé** : la réponse complète est d’abord lue dans l’application, puis découpée en événements SSE ; ce n’est pas un flux de tokens natif.
 - Le provider DeepSeek fourni a été testé avec DeepSeek 2.7.5 en anglais sur émulateur Android 13, y compris des réponses longues et le chat web. Autres versions, langues et téléphones physiques restent à valider. Voir [`providers/README.md`](providers/README.md).

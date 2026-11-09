@@ -71,6 +71,49 @@ class ClickAccessibilityService : AccessibilityService() {
         root.recycle()
     }
 
+    /** True only if Android currently exposes an input-method window. */
+    fun isSoftwareKeyboardVisible(): Boolean {
+        val currentWindows = windows
+        try {
+            return currentWindows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        } finally {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) currentWindows.forEach { it.recycle() }
+        }
+    }
+
+    /** Close the IME without a global BACK action, which could navigate away if
+     * the keyboard disappeared between detection and the action. Restore the
+     * previous system show mode even if the request fails or is cancelled. */
+    suspend fun hideKeyboardAfterSend(packageName: String): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+        if (currentPackageName() != packageName || !isSoftwareKeyboardVisible()) return@withContext false
+        val controller = softKeyboardController
+        val previousMode = controller.showMode
+        if (previousMode == SHOW_MODE_HIDDEN) return@withContext false
+        if (!controller.setShowMode(SHOW_MODE_HIDDEN)) return@withContext false
+        try {
+            // Clear only an editable input in the target app. Otherwise restoring
+            // the prior mode may reopen the IME immediately on a focused field.
+            val root = rootInActiveWindow
+            if (root != null) {
+                try {
+                    if (root.packageName?.toString() == packageName) {
+                        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                        if (focused != null) {
+                            try { if (focused.isEditable) focused.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS) }
+                            finally { focused.recycle() }
+                        }
+                    }
+                } finally { root.recycle() }
+            }
+            kotlinx.coroutines.delay(250)
+        } finally {
+            // Respect an external change made while the temporary override was active.
+            if (controller.showMode == SHOW_MODE_HIDDEN) controller.setShowMode(previousMode)
+        }
+        kotlinx.coroutines.delay(200)
+        !isSoftwareKeyboardVisible()
+    }
+
     fun findUniqueNode(packageName: String, selectors: List<UiSelector>, label: String): AccessibilityNodeInfo {
         return findNode(packageName, selectors, label, allowMultiple = false)
     }

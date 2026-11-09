@@ -103,6 +103,18 @@ class AutomationCoordinator(context: Context) {
                 } finally { send.recycle() }
             }
 
+            // Dismiss the software keyboard immediately after a successful send,
+            // before waiting for generation or collecting the copied response.
+            try {
+                service.hideKeyboardAfterSend(config.packageName)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The prompt was already sent; do not turn a keyboard-only
+                // failure into a failed request or silently resend it.
+                android.util.Log.w("AutomationCoordinator", "Unable to dismiss the software keyboard")
+            }
+
             val startedAt = System.currentTimeMillis()
             var lastObserved = ""
             var stablePolls = 0
