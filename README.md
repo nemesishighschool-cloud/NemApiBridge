@@ -8,7 +8,7 @@ NemApiBridge transforme un **téléphone Android** en passerelle HTTP locale com
 
 ## Mise en route sur le téléphone
 
-1. Installez l’APK de la [release GitHub](https://github.com/nemesishighschool-cloud/NemBridgeApi/releases), ainsi que l’application IA cible.
+1. Installez l’APK de la [release GitHub](https://github.com/nemesishighschool-cloud/NemApiBridge/releases), ainsi que l’application IA cible.
 2. Connectez-vous vous-même dans cette application. Pour DeepSeek, utilisez la version Android et la langue mentionnées dans [`providers/README.md`](providers/README.md).
 3. Ouvrez NemApiBridge → **Providers** → **Importer JSON**, puis choisissez `deepseek.json` ou un autre provider compatible. Son nom devient l’identifiant du modèle.
 4. Dans **Réglages**, accordez volontairement l’accès d’accessibilité et la permission de superposition. Choisissez le port : **8090 par défaut** (un port déjà enregistré est conservé après mise à jour).
@@ -50,6 +50,8 @@ Pour retirer la redirection : `adb forward --remove tcp:8090`. Il s’agit de **
 
 Le tableau de bord adapté de NemApi est accessible sur `/` et `/admin`, et le chat de test sur `/chat`. Il comprend configuration, statistiques estimées, clés API et intégrations agents. L’interface historique reste disponible sur `/legacy` et son chat sur `/legacy/chat`. L’accès web reste ouvert sans clé, même lorsque la protection API est activée ; l’administration web peut afficher et gérer les clés.
 
+Dans le chat, le bouton de pièce jointe lit l’image choisie sur le PC ou l’autre appareil : elle est transmise à NemApiBridge et placée temporairement dans le cache privé du téléphone. Aucune copie préalable sur le téléphone n’est nécessaire. L’automatisation tente de choisir le sélecteur Android système reconnu et le fichier temporaire ; si l’écran ou son choix sont ambigus ou non reconnus, elle s’arrête avec une erreur et demande une intervention. PNG, JPEG et WebP sont pris en charge, dans les limites indiquées ci-dessous.
+
 Le provider est importé dans l’application Android : un nouvel import remplace le provider enregistré. Le chat envoie à l’application IA les messages conservés dans son onglet. Les options d’autoconfiguration, de nouvelle discussion à chaque requête et de Markdown premium sont indisponibles sur Android. Cette interface est une adaptation partielle, pas une parité complète avec NemApi.
 
 ## API
@@ -83,6 +85,10 @@ Pour activer le contrôle Bearer, utilisez **Réglages → Clé API → Exiger u
 
 Les routes API hors `/health` nécessitent la clé uniquement si l’option Android est activée. Les routes `/web/*` sont toujours ouvertes aux clients locaux.
 
+## Mise à jour vers la v1.1.1
+
+Installez le nouvel APK par-dessus la version précédente. Pour bénéficier de la vérification plus fréquente, arrêtez le serveur et **réimportez le fichier `deepseek-v1.1.1.json`** sous le nom `DeepSeek` : un profil déjà enregistré n’est pas modifié automatiquement. L’automatisation surveille désormais la génération même pendant le défilement et traite certains écrans Android de choix d’application et de vue grille. Voir le [journal de validation](docs/1.1.1-VALIDATION.md) pour les résultats et leurs limites.
+
 ## Comportement et limites
 
 Le service essaie de masquer le clavier après l’envoi s’il détecte sa fenêtre, sans action système Retour et en rétablissant le mode précédent. Vérifié sur émulateur Android 13 ; le comportement sur d’autres claviers ou appareils n’est pas garanti.
@@ -91,7 +97,7 @@ Le service essaie de masquer le clavier après l’envoi s’il détecte sa fen�
 - Le streaming SSE est **simulé** : la réponse complète est d’abord lue dans l’application, puis découpée en événements SSE ; ce n’est pas un flux de tokens natif.
 - Le provider DeepSeek fourni a été testé avec DeepSeek 2.7.5 en anglais sur émulateur Android 13, y compris des réponses longues et le chat web. Autres versions, langues et téléphones physiques restent à valider. Voir [`providers/README.md`](providers/README.md).
 - Le service d’accessibilité, la connexion au compte et les permissions sont activés par l’utilisateur. Les restrictions Android, la mise en veille et les optimisations batterie peuvent interrompre le fonctionnement.
-- Le provider DeepSeek v1.1.0 peut copier la réponse entière dans le presse-papiers Android ; l’ancien contenu est remplacé et la réponse y reste accessible. Des applications en arrière-plan peuvent lire le presse-papiers sur Android avant 10. La copie et la fidélité dépendent de DeepSeek et d’Android ; si la copie ne peut pas être vérifiée, une erreur est renvoyée. Arrêtez le serveur, puis réimportez le JSON de la v1.1.0 sous le nom `DeepSeek` pour activer ce mode.
+- Le provider DeepSeek peut copier la réponse entière dans le presse-papiers Android ; l’ancien contenu est remplacé et la réponse y reste accessible. Des applications en arrière-plan peuvent lire le presse-papiers sur Android avant 10. La copie et la fidélité dépendent de DeepSeek et d’Android ; si la copie ne peut pas être vérifiée, une erreur est renvoyée. Arrêtez le serveur, puis réimportez le JSON du profil sous le nom `DeepSeek` pour activer ce mode.
 
 
 ### Limites connues de la v1.1.0

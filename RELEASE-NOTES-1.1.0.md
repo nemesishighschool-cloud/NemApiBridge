@@ -17,7 +17,7 @@ Installez `NemApiBridge-v1.1.0.apk`, puis arrêtez le serveur et réimportez `de
 - Un délai dépassé sur une réponse de 20 lignes et une réponse erronée à un JPEG bleu ont été observés sans cause établie ; des répétitions ont ensuite réussi. La fiabilité n’est pas garantie. Images : PNG/JPEG/WebP en data URL, huit maximum, 4 Mio dans le chat web et corps HTTP de 6 Mio maximum ; les URL distantes et `file_id` sont refusés.
 - Essais sur émulateur Android 13 avec DeepSeek 2.7.5 en anglais. Android 8.1 physique, Wi-Fi physique, autres fournisseurs et claviers n’ont pas été validés. Sur Android avant 10, d’autres applications en arrière-plan peuvent lire ou modifier le presse-papiers.
 
-Les détails et limites supplémentaires figurent dans le [README](https://github.com/nemesishighschool-cloud/NemBridgeApi/blob/main/README.md) et le journal d’essais du dépôt.
+Les détails et limites supplémentaires figurent dans le [README](https://github.com/nemesishighschool-cloud/NemApiBridge/blob/main/README.md) et le journal d’essais du dépôt.
 
 ## Vérification des fichiers
 

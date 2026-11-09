@@ -1,8 +1,8 @@
-# Instructions pour les agents — API Bridge
+# Instructions pour les agents — NemApiBridge
 
 ## But du dépôt
 
-API Bridge est une application Android Kotlin qui expose un serveur HTTP local compatible OpenAI et automatise une application d’IA installée sur le téléphone. La méthode cible lit l’arbre d’accessibilité Android, repère les éléments sémantiquement et agit sur leurs nœuds. La spécification de référence est [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+NemApiBridge est une application Android Kotlin qui expose un serveur HTTP local compatible OpenAI et automatise une application d’IA installée sur le téléphone. La méthode cible lit l’arbre d’accessibilité Android, repère les éléments sémantiquement et agit sur leurs nœuds. La spécification de référence est [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Règles de travail
 
@@ -40,3 +40,11 @@ Pour toute modification Kotlin/Android :
 4. Rapporter les vérifications exécutées et les limitations non vérifiées.
 
 Les documents doivent distinguer clairement la spécification cible, le code implémenté et les validations réalisées. Garder `README.md` cohérent avec l’architecture et utiliser `docs/ARCHITECTURE.md` pour les décisions détaillées.
+
+## Reprise et publication
+
+- Lire [`docs/CONTEXTE.md`](docs/CONTEXTE.md) et les notes de la release concernée ; inspecter `git status`, la branche et la configuration avant de toucher à un environnement existant.
+- Le dépôt officiel est `nemesishighschool-cloud/NemApiBridge` ; préserver le package Android et l’historique. Ne pas confondre ce projet Android avec NemApi.
+- Le presse-papiers et le DocumentsProvider temporaires sont autorisés dans le cadre décrit par le README. Toute extension aux écrans système doit rester limitée à des composants système identifiés, avec unicité et échec sûr.
+- Ne pas restaurer après désinstallation des préférences contenant des données chiffrées avec l’ancien Android Keystore. Éviter toute désinstallation ou suppression de données utilisateur sans accord.
+- Mesurer séparément détection, copie et résultat ; vérifier l’identité et la complétude, notamment en cas d’historique virtualisé ou réponse identique. Distinguer tests unitaires, émulateur et matériel réel.

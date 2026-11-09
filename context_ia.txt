@@ -1,10 +1,1 @@
-Contexte du projet API Bridge :
-- Application Android Kotlin/Gradle; l’API HTTP tourne sur le téléphone.
-- Architecture de référence : docs/ARCHITECTURE.md.
-- L’automatisation se fait uniquement avec AccessibilityService, arbre de nœuds et actions sémantiques.
-- Ne pas ajouter de positions d’écran, calibration, fallback par tap coordonné, contournement de connexion ou challenge.
-- Les sélecteurs et paramètres d’app cible viennent d’un provider JSON importé; le moteur commun ne contient pas de sélecteurs propres à une app.
-- L’utilisateur doit activer le service et se connecter lui-même à l’app cible.
-- L’API requiert Authorization: Bearer, n’accepte que les clients locaux et ne doit pas écrire prompts/réponses/clipboard/clés dans les logs.
-- Une requête UI est active à la fois; une seule peut attendre au maximum, puis les excédents sont rejetés.
-- Aucun émulateur ou conteneur Android ne doit être créé pour la tâche actuelle. La build doit être validée sur GitHub Actions; l’essai sur un téléphone reste distinct.
+Ce fichier est conservé pour les anciens liens. Le contexte technique actualisé et les consignes de reprise figurent dans docs/CONTEXTE.md et AGENTS.md. Le README décrit le comportement et les limites utilisateur.

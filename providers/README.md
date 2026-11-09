@@ -1,6 +1,6 @@
 # Provider DeepSeek expérimental
 
-`deepseek.json` cible `com.deepseek.chat` version 2.7.5 avec interface en anglais, relevée sur émulateur Android 13. Importer le fichier dans API Bridge, activer volontairement le service d’accessibilité et ouvrir DeepSeek sur une conversation. Le provider est compatible avec le moteur modifié de ce dépôt ; l’ancien APK ne comprend pas ces options.
+`deepseek.json` cible `com.deepseek.chat` version 2.7.5 avec interface en anglais, relevée sur émulateur Android 13. importer le fichier dans NemApiBridge, activer volontairement le service d’accessibilité et ouvrir DeepSeek sur une conversation. Le provider est compatible avec le moteur modifié de ce dépôt ; l’ancien APK ne comprend pas ces options.
 
 ## Comportement et vérifications
 
@@ -28,6 +28,6 @@ Les gestes sont désactivés par défaut pour les autres providers. La reconnais
 
 ### Mise à jour et limites
 
-La configuration DeepSeek 2.7.5 anglaise de la v1.1.0 active `copy_response` et utilise un délai de génération de 10 minutes. Après une mise à jour depuis une version antérieure, **arrêtez le serveur, puis réimportez le `deepseek.json` de cette release** sous le nom `DeepSeek` : l’installation de l’APK ne remplace pas les providers enregistrés. Le délai de votre client HTTP doit aussi être suffisant.
+La configuration DeepSeek 2.7.5 anglaise de la v1.1.1 active `copy_response` et utilise un délai de génération de 10 minutes. Après une mise à jour depuis une version antérieure, **arrêtez le serveur, puis réimportez le `deepseek.json` de cette release** sous le nom `DeepSeek` : l’installation de l’APK ne remplace pas les providers enregistrés. Le délai de votre client HTTP doit aussi être suffisant.
 
 La réponse copiée est limitée à 500 000 caractères par NemApiBridge, et Android ou DeepSeek peuvent imposer des limites inférieures. Les mises en forme et la complétude dépendent de ce que le bouton DeepSeek copie ; il n’y a pas de garantie générale pour toutes les versions, langues, pièces jointes ou tailles. Si la copie ne peut pas être vérifiée, la requête échoue. Le réseau web reste ouvert sans clé ; utilisez-le seulement sur un réseau fiable.

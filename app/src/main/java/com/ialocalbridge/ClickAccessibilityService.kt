@@ -314,6 +314,50 @@ class ClickAccessibilityService : AccessibilityService() {
         } finally { nodes.forEach { it.recycle() } }
     }
 
+    /** In a recognised Android resolver, choose only an unambiguous system
+     * DocumentsUI label. No coordinates or persistent default are used. */
+    fun selectSystemDocumentResolver(): Boolean {
+        val resolver = currentPackageName() ?: return false
+        if (resolver != "android" && resolver != "com.android.intentresolver") return false
+        val pm = packageManager
+        val systemMask = android.content.pm.ApplicationInfo.FLAG_SYSTEM or android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
+        val resolverFlags = try { pm.getApplicationInfo(resolver, 0).flags } catch (_: Exception) { return false }
+        if (resolverFlags and systemMask == 0) return false
+        val resolved = listOf(android.content.Intent.ACTION_GET_CONTENT, android.content.Intent.ACTION_OPEN_DOCUMENT).flatMap { action ->
+            val intent = android.content.Intent(action).setType("image/*").addCategory(android.content.Intent.CATEGORY_OPENABLE)
+            pm.queryIntentActivities(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+        }
+        val approved = setOf("com.android.documentsui", "com.google.android.documentsui")
+        val systemCandidates = resolved.filter { it.activityInfo.packageName in approved && it.activityInfo.applicationInfo.flags and systemMask != 0 }
+        if (systemCandidates.isEmpty()) return false
+        // Both the application and activity label can be rendered by a resolver.
+        // Refuse collisions with other resolved activities, including non-system apps.
+        val trustedLabels = systemCandidates.flatMap { listOf(it.loadLabel(pm).toString(), it.activityInfo.applicationInfo.loadLabel(pm).toString()) }.filter { it.isNotBlank() }.toSet()
+        val otherLabels = resolved.filter { it.activityInfo.packageName !in approved }.flatMap { listOf(it.loadLabel(pm).toString(), it.activityInfo.applicationInfo.loadLabel(pm).toString()) }.toSet()
+        val nodes = readTree(resolver)
+        try {
+            val rows = nodes.filter { it.isVisibleToUser && it.isEnabled && it.text != null &&
+                (it.viewIdResourceName == "android:id/text1" || it.viewIdResourceName == "com.android.intentresolver:id/text1") }
+            val index = ResolverLabelPolicy.uniqueTrustedIndex(trustedLabels, otherLabels, rows.map { it.text.toString() }) ?: return false
+            click(rows[index], "system_document_resolver")
+            return true
+        } finally { nodes.forEach { it.recycle() } }
+    }
+
+
+    fun confirmSystemResolverOnce(): Boolean {
+        val resolver = currentPackageName() ?: return false
+        if (resolver != "android" && resolver != "com.android.intentresolver") return false
+        val nodes = readTree(resolver)
+        try {
+            val once = nodes.filter { it.isVisibleToUser && it.isEnabled &&
+                (it.viewIdResourceName == "android:id/button_once" || it.viewIdResourceName == "com.android.intentresolver:id/button_once") }
+            if (once.size != 1) return false
+            click(once.single(), "system_document_once")
+            return true
+        } finally { nodes.forEach { it.recycle() } }
+    }
+
     fun inspectAccessibleElements(packageName: String, limit: Int = 150): List<AccessibleElement> {
         requireTargetForeground(packageName)
         val nodes = readTree(packageName)
@@ -441,10 +485,13 @@ class ClickAccessibilityService : AccessibilityService() {
         // Verify that the marker was actually installed before trusting any
         // later clipboard content, avoiding a stale answer if copying fails.
         readFocusedClipboard(clipboard, marker, expectMarker = true)
+        val debugTiming = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+        if (debugTiming) android.util.Log.i("NemTiming", "marker_verified elapsed=${android.os.SystemClock.elapsedRealtime()}")
         awaitTarget()
         if (hasAnyMatch(packageName, config.selectors.generating)) throw AutomationException("response_incomplete", "La génération est encore en cours.")
         val anchor = findLatestNode(packageName, config.selectors.copyResponse, "copy_response")
         try { click(anchor, "copy_response") } finally { anchor.recycle() }
+        if (debugTiming) android.util.Log.i("NemTiming", "copy_clicked elapsed=${android.os.SystemClock.elapsedRealtime()}")
         val result = readFocusedClipboard(clipboard, marker, expectMarker = false)
         awaitTarget()
         if (result.length > MAX_RESPONSE_TEXT_CHARS) throw AutomationException("response_too_large", "La réponse copiée dépasse la limite de lecture.")

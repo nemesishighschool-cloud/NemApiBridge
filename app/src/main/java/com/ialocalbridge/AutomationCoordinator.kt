@@ -193,10 +193,12 @@ class AutomationCoordinator(context: Context) {
             }
 
             val startedAt = System.currentTimeMillis()
-            var lastObserved = ""
-            var stablePolls = 0
+            var stability = ResponseStabilityPolicy.State()
             var sawGenerating = false
             var diagnosticPolls = 0
+            var loggedInactive = false
+            var loggedCandidate = false
+            val debugTiming = (appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
             while (System.currentTimeMillis() - startedAt < config.timeouts.responseMs) {
                 if (cancelled.get()) {
@@ -204,7 +206,8 @@ class AutomationCoordinator(context: Context) {
                 }
                 delay(config.timeouts.pollIntervalMs)
 
-                scrollToEnd(service, config, allowNonScrolling = initialScrollMissing, validateVisibleAnswer = false)
+                scrollToEnd(service, config, allowNonScrolling = initialScrollMissing, validateVisibleAnswer = false,
+                    onGenerationObserved = { if (it) sawGenerating = true })
                 val (answer, isGenerating) = withContext(Dispatchers.Main.immediate) {
                     service.requireTargetForeground(config.packageName)
                     val currentAnswer = try {
@@ -221,6 +224,10 @@ class AutomationCoordinator(context: Context) {
                 }
 
                 sawGenerating = sawGenerating || isGenerating
+                if (debugTiming && sawGenerating && !isGenerating && !loggedInactive) {
+                    loggedInactive = true
+                    android.util.Log.i("NemTiming", "generation_inactive elapsed=${android.os.SystemClock.elapsedRealtime()}")
+                }
                 // A shrinking view of the previous response is not evidence of a new answer.
                 val resemblesPrevious = answer.isNotBlank() && initialAnswer.isNotBlank() && initialAnswer.contains(answer)
                 val newByIdentity = if ((resemblesPrevious || initialScrollMissing) && baseline != null && answer.isNotBlank()) {
@@ -234,23 +241,23 @@ class AutomationCoordinator(context: Context) {
                 } else false
                 val candidateIsNew = ResponseIdentityPolicy.isNew(answer, initialAnswer, initialScrollMissing, newByIdentity)
                 // Debug builds log only lengths and state flags, never prompt/answer text.
-                if ((appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 && ++diagnosticPolls % 20 == 0) android.util.Log.d("NemResponseDiag", "len=${answer.length} prev=${initialAnswer.length} noScroll=$initialScrollMissing generating=$isGenerating sawGeneration=$sawGenerating identity=$newByIdentity new=$candidateIsNew stable=$stablePolls")
+                if ((appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 && ++diagnosticPolls % 20 == 0) android.util.Log.d("NemResponseDiag", "len=${answer.length} prev=${initialAnswer.length} noScroll=$initialScrollMissing generating=$isGenerating sawGeneration=$sawGenerating identity=$newByIdentity new=$candidateIsNew stable=${stability.equalPolls}")
+                stability = ResponseStabilityPolicy.observe(stability, answer, candidateIsNew, isGenerating)
+                if (isGenerating) continue
                 if (candidateIsNew) {
-                    if (answer == lastObserved) {
-                        stablePolls++
-                    } else {
-                        lastObserved = answer
-                        stablePolls = 0
+                    if (debugTiming && !loggedCandidate) {
+                        loggedCandidate = true
+                        android.util.Log.i("NemTiming", "candidate_inactive elapsed=${android.os.SystemClock.elapsedRealtime()}")
                     }
-                    if (!isGenerating && stablePolls >= config.timeouts.stablePolls) {
+                    if (stability.equalPolls >= config.timeouts.stablePolls) {
                         if (config.selectors.copyResponse.isNotEmpty()) {
-                            return service.copyLatestResponse(config)
+                            if (debugTiming) android.util.Log.i("NemTiming", "copy_start elapsed=${android.os.SystemClock.elapsedRealtime()}")
+                            return service.copyLatestResponse(config).also {
+                                if (debugTiming) android.util.Log.i("NemTiming", "copy_complete elapsed=${android.os.SystemClock.elapsedRealtime()}")
+                            }
                         }
                         return readCompleteResponse(service, config, initialScrollMissing)
                     }
-                } else {
-                    lastObserved = ""
-                    stablePolls = 0
                 }
             }
 
@@ -330,12 +337,18 @@ class AutomationCoordinator(context: Context) {
         service: ClickAccessibilityService,
         config: ProviderConfig,
         allowNonScrolling: Boolean = false,
-        validateVisibleAnswer: Boolean = true
+        validateVisibleAnswer: Boolean = true,
+        onGenerationObserved: ((Boolean) -> Unit)? = null
     ): Boolean {
         if (config.selectors.scrollToEnd.isEmpty()) return false
         repeat(MAX_SCROLL_STEPS) {
             if (cancelled.get()) throw AutomationException("cancelled", "La requête a été arrêtée.")
+            var generationActive = false
             val moved = withContext(Dispatchers.Main.immediate) {
+                if (onGenerationObserved != null) {
+                    generationActive = service.hasAnyMatch(config.packageName, config.selectors.generating)
+                    onGenerationObserved(generationActive)
+                }
                 try {
                     service.scrollForward(config.packageName, config.selectors.scrollToEnd)
                 } catch (e: AutomationException) {
@@ -352,7 +365,8 @@ class AutomationCoordinator(context: Context) {
                 }
             }
             if (moved == null) return true
-            if (!moved) return false
+            if (!moved || generationActive) return false
+            // Do not monopolize the response observer while an answer grows.
             // Let Compose finish the scroll before asking for the next page.
             delay(250)
         }
@@ -370,6 +384,7 @@ class AutomationCoordinator(context: Context) {
         if (!menuOpen) clickTarget(config.selectors.imageAttach, "image_attach")
         clickTarget(config.selectors.imageDocument, "image_document")
         var picker: String? = null
+        var resolverSelectionAttempted = false
         repeat(80) {
             if (picker == null) {
                 val current = withContext(Dispatchers.Main.immediate) { service.currentPackageName() }
@@ -378,7 +393,15 @@ class AutomationCoordinator(context: Context) {
                     if (flags and (android.content.pm.ApplicationInfo.FLAG_SYSTEM or android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0)
                         throw AutomationException("user_intervention_required", "Le sélecteur de fichiers n’est pas une application système reconnue.")
                     picker = current
-                } else delay(100)
+                } else {
+                    if (current == "android" || current == "com.android.intentresolver") {
+                        withContext(Dispatchers.Main.immediate) {
+                            if (!resolverSelectionAttempted) resolverSelectionAttempted = service.selectSystemDocumentResolver()
+                            else service.confirmSystemResolverOnce()
+                        }
+                    }
+                    delay(100)
+                }
             }
         }
         val pkg = picker ?: throw AutomationException("user_intervention_required", "Sélecteur Android non reconnu ; ferme-le manuellement.")
@@ -393,8 +416,19 @@ class AutomationCoordinator(context: Context) {
         var chosen = false
         var rootsOpened = false
         var rootClicked = false
+        var listViewApplied = false
         repeat(120) {
             if (!chosen) {
+                // DocumentsUI grid mode can expose only a composite description,
+                // not the exact filename. Prefer its semantic switch to list mode.
+                if (rootClicked && !listViewApplied) {
+                    val listView = find(listOf(UiSelector(by="content_description", value="List view")), "picker_list_view")
+                    if (listView != null) {
+                        click(listView, "picker_list_view")
+                        listViewApplied = true
+                        delay(200)
+                    }
+                }
                 val file = find(fileSelector, "image_file")
                 if (file != null) { click(file, "image_file"); chosen = true }
                 else if (!rootClicked) {

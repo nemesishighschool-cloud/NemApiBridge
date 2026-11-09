@@ -8,6 +8,10 @@
 
     <queries>
         <intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent>
+        <intent><action android:name="android.intent.action.GET_CONTENT"/><data android:mimeType="image/*"/></intent>
+        <intent><action android:name="android.intent.action.OPEN_DOCUMENT"/><data android:mimeType="image/*"/></intent>
+        <package android:name="com.android.documentsui"/>
+        <package android:name="com.google.android.documentsui"/>
     </queries>
 
     <application
