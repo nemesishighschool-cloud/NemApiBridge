@@ -59,12 +59,14 @@
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><div><h3 id="h-api">L’API</h3><p class="desc">Le proxy parle OpenAI. Rien d'autre.</p></div></div>
+          <div class="card-head"><div><h3 id="h-api">L’API</h3><p class="desc">Compatibilité OpenAI partielle adaptée à Android.</p></div></div>
           <div class="callout" style="margin-bottom:16px">
             <span id="fmt-ico"></span>
-            <div>Le corps de la requête est <b>strictement OpenAI</b> : <code>model</code>, <code>messages</code>,
-              <code>tools</code>, <code>stream</code>. Aucune variable propriétaire (<code>fresh_chat</code> n'existe
-              plus). L'agent se déclare par un en-tête HTTP, que tous les clients savent envoyer.</div>
+            <div>Les endpoints Chat Completions et Responses acceptent une partie des formats OpenAI (<code>model</code>, <code>messages</code>,
+              <code>tools</code>, <code>stream</code>). Certaines options sont refusées ou non appliquées : notamment les limites
+              <code>max_tokens</code>/<code>max_output_tokens</code>, <code>temperature</code> et <code>top_p</code> ne contrôlent pas le fournisseur Android.
+              L’en-tête <code>X-NemApi-Ignored-Parameters</code> signale certains paramètres ignorés, mais sa liste n’est pas exhaustive et tous les clients ne l’affichent pas.
+              Ne l’utilise pas comme limite de coût ou de sécurité. Un agent peut se déclarer avec <code>X-NemApi-Agent</code> si son client permet cet en-tête.</div>
           </div>
           <div class="section-title" style="font-size:10.5px;font-weight:780;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin:0 0 6px">Appel minimal</div>
           <pre class="session-box mono" id="curl-example" style="white-space:pre-wrap;margin:0"></pre>

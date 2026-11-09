@@ -1,9 +1,12 @@
 # Real DeepSeek/Android test: warnings expose ignored controls without claiming enforcement.
-import json, urllib.request
+import json, urllib.request, urllib.error
 base='http://127.0.0.1:8090'
 def post(path, body):
  req=urllib.request.Request(base+path,json.dumps(body).encode('utf-8'),{'Content-Type':'application/json'})
- return urllib.request.urlopen(req,timeout=180)
+ try: return urllib.request.urlopen(req,timeout=180)
+ except urllib.error.HTTPError as e:
+  details=e.read().decode(errors="replace")
+  raise AssertionError(f"HTTP {e.code}: {details}") from e
 chat={'model':'DeepSeek','messages':[{'role':'user','content':'Reply exactly WARN_TEST_OK.'}],'max_tokens':2,'temperature':0}
 with post('/v1/chat/completions',chat) as r:
  ignored=r.headers.get('X-NemApi-Ignored-Parameters','')

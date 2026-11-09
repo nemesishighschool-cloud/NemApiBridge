@@ -245,6 +245,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
 
     private fun handleChatCompletions(session: IHTTPSession, responseMode: Boolean = false): Response {
         val incoming = parseJsonBody(session)
+        RequestParameterAudit.validate(incoming)
         val request = if (responseMode) ResponsesCodec.toChat(incoming) else incoming
         val format = request.optJSONObject("response_format")
         if (format != null && format.optString("type", "text") != "text")
