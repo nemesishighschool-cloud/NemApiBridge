@@ -107,6 +107,7 @@ class ProviderConfigParserTest {
                 "input_activation": [{"by": "text", "value": "Type a message"}],
                 "copy_response": [{"by": "content_description", "value": "Copy"}],
                 "allow_input_gesture": true,
+                "allow_stop_gesture": true,
                 "detect_identical_responses": true,
                 "allow_reconstruction_gesture": true,
                 "send": [{"by": "content_description", "value": "Send"}],
@@ -125,6 +126,8 @@ class ProviderConfigParserTest {
         assertEquals("true", config.selectors.scrollToEnd.single().value)
         assertEquals("Type a message", config.selectors.inputActivation.single().value)
         assertEquals(true, config.selectors.allowInputGesture)
+        assertEquals(true, config.selectors.allowStopGesture)
+        assertEquals(false, ProviderConfigParser.parse(com.google.gson.Gson().toJson(config).replace("\"allow_stop_gesture\":true", "\"allow_stop_gesture\":false")).selectors.allowStopGesture)
         assertEquals(true, config.selectors.detectIdenticalResponses)
         assertEquals("Copy", config.selectors.copyResponse.single().value)
     }

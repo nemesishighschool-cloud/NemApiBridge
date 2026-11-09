@@ -23,6 +23,8 @@ data class ProviderSelectors(
     val copyResponse: List<UiSelector> = emptyList(),
     @SerializedName("allow_input_gesture")
     val allowInputGesture: Boolean = false,
+    @SerializedName("allow_stop_gesture")
+    val allowStopGesture: Boolean = false,
     @SerializedName("allow_reconstruction_gesture")
     val allowReconstructionGesture: Boolean = false,
     @SerializedName("detect_identical_responses")

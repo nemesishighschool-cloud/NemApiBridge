@@ -111,6 +111,7 @@ class AgentIntegrationManager(context: Context) {
         if (!lock.tryLock()) throw IllegalArgumentException("Une requête est en cours ; réessaie après sa fin.")
         return try { val count = if (state == null) 0 else 1; state = null; count } finally { lock.unlock() }
     }
+    fun hasPendingWork(): Boolean = accepted.get() > 0
     fun <T> serialized(block: () -> T): T {
         if (accepted.incrementAndGet() > 2) {
             accepted.decrementAndGet()

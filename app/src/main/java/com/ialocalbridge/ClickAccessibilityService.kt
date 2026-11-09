@@ -361,9 +361,9 @@ class ClickAccessibilityService : AccessibilityService() {
     }
 
     // Explicitly opted-in fallback: use the current semantic node bounds, never stored coordinates.
-    suspend fun activateInputByGesture(packageName: String, node: AccessibilityNodeInfo): Boolean {
+    suspend fun tapNodeByGesture(packageName: String, node: AccessibilityNodeInfo): Boolean {
         if (currentPackageName() != packageName || node.packageName?.toString() != packageName || !node.isVisibleToUser || !node.isEnabled) {
-            throw AutomationException("wrong_app", "Le champ cible n’est pas visible dans l’application active.")
+            throw AutomationException("wrong_app", "Le contrôle cible n’est pas visible dans l’application active.")
         }
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
@@ -371,7 +371,7 @@ class ClickAccessibilityService : AccessibilityService() {
         @Suppress("DEPRECATION")
         (getSystemService(WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.getRealMetrics(metrics)
         if (bounds.isEmpty || bounds.left < 0 || bounds.top < 0 || bounds.right > metrics.widthPixels || bounds.bottom > metrics.heightPixels) {
-            throw AutomationException("action_failed", "La zone du champ n’est pas entièrement visible.")
+            throw AutomationException("action_failed", "La zone du contrôle n’est pas entièrement visible.")
         }
         val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
         val gesture = GestureDescription.Builder()

@@ -309,8 +309,11 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                 }
             } catch (e: Exception) { Log.w(TAG, "Agent screen marker unavailable: ${(e as? AutomationException)?.errorCode ?: e.javaClass.simpleName}"); null }
         }
+        val cancellationTicket = AutomationCoordinator.cancellationTicket()
         fun complete(): CompletionData = agentIntegrations.serialized {
           try {
+            // A request can wait on the agent lock before it reaches the coordinator.
+            AutomationCoordinator.ensureNotCancelled(cancellationTicket)
             val sessionAgent = if (imagePayload.images.isEmpty()) agent else null
             val beforeMarker = screenMarker()
             val plan = agentIntegrations.plan(sessionAgent, config.provider, messages, tools, beforeMarker, prompt) { tail ->
@@ -320,7 +323,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             val sentPrompt = plan.prompt
             val result = runBlocking(Dispatchers.IO) { coordinator.processQuestion(config, sentPrompt, imagePayload.images,
                 detectIncompleteTool = toolChoice != "none" && ((tools != null && tools.length() > 0) || agent?.nativeTools == true),
-                allowContinuation = agent?.continuation == true, onContinuation = agentIntegrations::countContinuation) }
+                allowContinuation = agent?.continuation == true, onContinuation = agentIntegrations::countContinuation, ticket = cancellationTicket) }
             totalRequests.incrementAndGet()
             val promptTokens = estimateTokens(sentPrompt)
             val completionTokens = estimateTokens(result)
@@ -873,13 +876,22 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
     }
 
     private fun handleStopRequest(): Response {
-        val stopped = runBlocking(Dispatchers.IO) { coordinator.stopGeneration() }
+        val pending = agentIntegrations.hasPendingWork()
+        val result = runBlocking(Dispatchers.IO) { coordinator.stopGeneration() }
+        val stopped = result.requested || pending
         return newFixedLengthResponse(
             if (stopped) Response.Status.OK else Response.Status.CONFLICT,
             MIME_JSON,
             JSONObject()
                 .put("stopped", stopped)
-                .put("message", if (stopped) "Arrêt demandé." else "Aucun contrôle stop configuré ou aucune requête active.")
+                .put("target_stop_clicked", result.targetStopClicked)
+                .put("target_generation_inactive", result.targetGenerationInactive)
+                .put("message", when {
+                    result.targetGenerationInactive -> "Arrêt demandé ; l’indicateur de génération n’est plus visible."
+                    result.targetStopClicked -> "Action Stop envoyée, mais la fin de génération n’a pas été confirmée."
+                    stopped -> "Annulation demandée, mais le bouton d’arrêt cible n’a pas été actionné : la génération peut continuer."
+                    else -> "Aucune requête active détectée et bouton d’arrêt cible inaccessible."
+                })
                 .toString()
         )
     }

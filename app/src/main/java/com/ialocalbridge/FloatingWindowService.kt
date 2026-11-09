@@ -174,7 +174,12 @@ class FloatingWindowService : Service() {
                     val stopped = runBlocking(Dispatchers.IO) {
                         AutomationCoordinator(this@FloatingWindowService).stopGeneration()
                     }
-                    if (stopped) "Arrêt demandé" else "Aucun contrôle d’arrêt disponible."
+                    when {
+                        stopped.targetGenerationInactive -> "Arrêt demandé ; génération inactive."
+                        stopped.targetStopClicked -> "Stop envoyé : fin de génération non confirmée."
+                        stopped.requested -> "Annulation demandée : la génération peut continuer."
+                        else -> "Aucun contrôle d’arrêt disponible."
+                    }
                 } catch (e: Exception) {
                     "Échec de l’arrêt : ${e.message ?: e.javaClass.simpleName}"
                 }

@@ -17,7 +17,7 @@ class AutomationCoordinator(context: Context) {
     private val appContext = context.applicationContext
     private val providerRepository = ProviderRepository(appContext)
 
-    suspend fun processQuestion(config: ProviderConfig, prompt: String, images: List<ImagePayload.Payload> = emptyList(), detectIncompleteTool: Boolean = false, allowContinuation: Boolean = false, onContinuation: () -> Unit = {}): String = withContext(Dispatchers.IO) {
+    suspend fun processQuestion(config: ProviderConfig, prompt: String, images: List<ImagePayload.Payload> = emptyList(), detectIncompleteTool: Boolean = false, allowContinuation: Boolean = false, onContinuation: () -> Unit = {}, ticket: Long = cancellationTicket()): String = withContext(Dispatchers.IO) {
         if (accepted.incrementAndGet() > MAX_ACCEPTED_REQUESTS) {
             accepted.decrementAndGet()
             throw AutomationException("queue_full", "Une autre requête utilise déjà l’application cible.")
@@ -33,8 +33,10 @@ class AutomationCoordinator(context: Context) {
             if (!acquired) {
                 throw AutomationException("queue_timeout", "La requête a expiré en attendant la file d’automatisation.")
             }
-            running.set(true)
-            cancelled.set(false)
+            gate.begin(ticket) {
+                running.set(true)
+                cancelled.set(false)
+            }
             var result = execute(config, prompt, images, staged)
             var attempts = 0
             while (detectIncompleteTool && ToolContinuation.isIncomplete(result)) {
@@ -57,22 +59,65 @@ class AutomationCoordinator(context: Context) {
         }
     }
 
-    suspend fun stopGeneration(): Boolean = withContext(Dispatchers.Main.immediate) {
-        cancelled.set(true)
-        val config = providerRepository.get(providerRepository.getActiveName() ?: return@withContext false)
-            ?: return@withContext false
-        val service = ClickAccessibilityService.instance ?: return@withContext false
-        service.configureTarget(config.packageName)
-        val stopSelectors = config.selectors.stop
-        if (stopSelectors.isEmpty()) return@withContext false
+    data class StopResult(val requested: Boolean, val targetStopClicked: Boolean, val targetGenerationInactive: Boolean)
 
-        val node = service.findUniqueNode(config.packageName, stopSelectors, "stop")
+    suspend fun stopGeneration(): StopResult {
+        // Block new work until the UI stop attempt is over: otherwise a late click
+        // could stop a new request rather than the one being cancelled.
+        val hadActiveJob = gate.beginStop { cancelled.set(true); running.get() }
         try {
-            service.click(node, "stop")
-            true
-        } finally {
-            node.recycle()
-        }
+            val clicked = withContext(Dispatchers.Main.immediate) {
+                val config = providerRepository.get(providerRepository.getActiveName() ?: return@withContext false)
+                    ?: return@withContext false
+                val service = ClickAccessibilityService.instance ?: return@withContext false
+                service.configureTarget(config.packageName)
+                val selectors = config.selectors.stop
+                if (selectors.isEmpty()) return@withContext false
+                val deadline = System.currentTimeMillis() + if (hadActiveJob) 3_000 else 0
+                while (true) {
+                    val node = try { service.findUniqueNode(config.packageName, selectors, "stop") }
+                        catch (e: AutomationException) {
+                            if (e.errorCode != "selector_missing") return@withContext false
+                            null
+                        }
+                    if (node != null) {
+                        if (appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                            val bounds = android.graphics.Rect().also { node.getBoundsInScreen(it) }
+                            android.util.Log.d("NemStopDiag", "visible=${node.isVisibleToUser} enabled=${node.isEnabled} clickable=${node.isClickable} bounds=$bounds")
+                        }
+                        try {
+                            try { service.click(node, "stop"); return@withContext true }
+                            catch (e: AutomationException) {
+                                if (e.errorCode != "action_failed" || !config.selectors.allowStopGesture) return@withContext false
+                                return@withContext withTimeoutOrNull(3_000) { service.tapNodeByGesture(config.packageName, node) } ?: false
+                            }
+                        } finally { node.recycle() }
+                    }
+                    if (System.currentTimeMillis() >= deadline) return@withContext false
+                    delay(150)
+                }
+                @Suppress("UNREACHABLE_CODE") false
+            }
+            // A completed accessibility action or gesture is not proof the app
+            // stopped. Require repeated observations of the configured generating
+            // indicator disappearing; a missing/changed window is not confirmation.
+            val inactive = if (clicked) withContext(Dispatchers.Main.immediate) {
+                val config = providerRepository.get(providerRepository.getActiveName().orEmpty())
+                val service = ClickAccessibilityService.instance
+                if (config == null || service == null || config.selectors.generating.isEmpty()) return@withContext false
+                var absent = 0
+                val deadline = System.currentTimeMillis() + 3_000
+                while (System.currentTimeMillis() < deadline) {
+                    val generating = try { service.hasAnyMatch(config.packageName, config.selectors.generating) }
+                        catch (_: AutomationException) { return@withContext false }
+                    absent = if (generating) 0 else absent + 1
+                    if (absent >= 3) return@withContext true
+                    delay(250)
+                }
+                false
+            } else false
+            return StopResult(hadActiveJob || clicked, clicked, inactive)
+        } finally { gate.endStop() }
     }
 
     private suspend fun execute(config: ProviderConfig, prompt: String, images: List<ImagePayload.Payload>, staged: MutableList<BridgeImageProvider.Image>): String {
@@ -395,7 +440,7 @@ class AutomationCoordinator(context: Context) {
                         if (e.errorCode != "action_failed") throw e
                         if (!config.selectors.allowInputGesture) throw AutomationException("user_intervention_required", "Le champ de saisie n’expose pas de clic accessible. Ouvrez-le manuellement puis réessayez.")
                         val completed = withTimeoutOrNull(3_000) {
-                            service.activateInputByGesture(config.packageName, activation)
+                            service.tapNodeByGesture(config.packageName, activation)
                         } ?: false
                         if (!completed) throw AutomationException("action_failed", "L’activation du champ par geste a échoué.")
                     }
@@ -434,6 +479,7 @@ class AutomationCoordinator(context: Context) {
         private const val MAX_ACCEPTED_REQUESTS = 2
         private const val QUEUE_WAIT_MS = 15_000L
 
+        private val gate = CancellationGate()
         private val running = AtomicBoolean(false)
         private val cancelled = AtomicBoolean(false)
         private val accepted = AtomicInteger(0)
@@ -442,8 +488,11 @@ class AutomationCoordinator(context: Context) {
         val isRunning: Boolean
             get() = running.get()
 
-        fun stopCurrentJob() {
+        fun cancellationTicket(): Long = gate.ticket()
+        fun ensureNotCancelled(ticket: Long) { gate.begin(ticket) { } }
+        fun stopCurrentJob(): Boolean = gate.cancel {
             cancelled.set(true)
+            running.get()
         }
     }
 }

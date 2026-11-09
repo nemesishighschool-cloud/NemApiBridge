@@ -48,7 +48,7 @@
             <label class="switch"><input type="checkbox" id="cfg-premium-md" disabled title="Pas encore disponible sur Android"><span class="slider"></span></label>
           </div>
           <div class="setting">
-            <div><div class="s-title">Arrêter les jobs</div><div class="s-desc">Annule toutes les requêtes en attente ou en cours.</div></div>
+            <div><div class="s-title">Arrêter les jobs</div><div class="s-desc">Demande l’annulation des requêtes en attente et en cours. La génération dans l’application peut continuer si son bouton d’arrêt n’est pas accessible.</div></div>
             <button class="btn btn-danger btn-sm" id="cfg-stop" type="button">Arrêter</button>
           </div>
           <div class="callout" style="margin-top:14px" id="cfg-agents-hint">
@@ -145,10 +145,10 @@ for (const [id, key] of Object.entries(SWITCHES)) {
   });
 }
 $("cfg-stop").addEventListener("click", async () => {
-  if (!(await confirmDialog("Arrêter les jobs ?", "Toutes les requêtes en attente ou en cours seront annulées.", { ok: "Arrêter", danger: true }))) return;
+  if (!(await confirmDialog("Arrêter les jobs ?", "Une annulation sera demandée pour les requêtes en attente et en cours. La génération peut continuer dans l’application.", { ok: "Arrêter", danger: true }))) return;
   try {
     const r = await post("/stop");
-    toast(r.stopped ? "Arrêt demandé" : "Aucune génération arrêtée", "ok");
+    toast(r.message || (r.stopped ? "Arrêt demandé" : "Aucune génération arrêtée"), r.target_generation_inactive ? "ok" : "error");
   } catch (err) {
     toast("Erreur : " + err.message, "error");
   }
