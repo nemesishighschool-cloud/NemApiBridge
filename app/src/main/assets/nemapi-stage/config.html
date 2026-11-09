@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NemApiBridge · Configuration</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("nemapi-theme")||"dark"}catch(e){}</script>
+<link rel="stylesheet" href="/next/admin.css?v=5.6.4">
+<link rel="icon" href="/next/icons/logo-32.png" type="image/png">
+</head>
+<body data-page="config" data-title="Configuration">
+<div class="app">
+  <aside class="sidebar"></aside>
+  <div class="main">
+    <header class="topbar"></header>
+    <main class="content">
+      <div class="page-head">
+        <div>
+          <h1>Configuration</h1>
+          <div class="sub">Provider Android actif, modèle et paramètres généraux.</div>
+        </div>
+      </div>
+
+      <div class="card mb">
+        <div class="card-head"><div><h3 id="h-tabs">Application fournisseur</h3>
+          <p class="desc">Un seul provider est actif. L’import ou le remplacement se fait dans l’application Android, serveur arrêté.</p></div></div>
+        <div id="cfg-providers" class="providers"><div class="skeleton" style="height:96px"></div><div class="skeleton" style="height:96px"></div><div class="skeleton" style="height:96px"></div></div>
+      </div>
+
+      <div class="grid g2">
+        <div class="card">
+          <div class="card-head"><div><h3 id="h-settings">Paramètres</h3><p class="desc">Comportement général du proxy (mode classique).</p></div></div>
+          <div class="setting">
+            <div><div class="s-title">Streaming (SSE)</div><div class="s-desc">Autorise les réponses en flux. C'est le <b>client</b> qui choisit (<code>stream: true</code> ou en-tête <code>Accept: text/event-stream</code>) ; sans demande, la réponse est du JSON. Désactivé, un client qui demande un flux reçoit une erreur 400 explicite.</div></div>
+            <label class="switch"><input type="checkbox" id="cfg-stream"><span class="slider"></span></label>
+          </div>
+          <div class="setting">
+            <div><div class="s-title">Auto-configuration</div><div class="s-desc">Non disponible sur Android : sélectionne le provider depuis l’application.</div></div>
+            <label class="switch"><input type="checkbox" id="cfg-auto-config" disabled title="Pas encore disponible sur Android"><span class="slider"></span></label>
+          </div>
+          <div class="setting">
+            <div><div class="s-title">Nouvelle discussion à chaque requête</div><div class="s-desc">Non disponible sur Android actuellement. Ouvre un nouveau chat pour chaque requête : tout le contexte est renvoyé, sans empilement dans l'UI web.
+              Désactivé par défaut (la discussion web <b>persiste</b>) ; une intégration d'agent active l'ignore de toute façon.</div></div>
+            <label class="switch"><input type="checkbox" id="cfg-fresh-chat" disabled title="Pas encore disponible sur Android"><span class="slider"></span></label>
+          </div>
+          <div class="setting">
+            <div><div class="s-title">Markdown premium</div><div class="s-desc">Non disponible sur Android : la lecture suit la configuration du provider, notamment son bouton Copier.</div></div>
+            <label class="switch"><input type="checkbox" id="cfg-premium-md" disabled title="Pas encore disponible sur Android"><span class="slider"></span></label>
+          </div>
+          <div class="setting">
+            <div><div class="s-title">Arrêter les jobs</div><div class="s-desc">Annule toutes les requêtes en attente ou en cours.</div></div>
+            <button class="btn btn-danger btn-sm" id="cfg-stop" type="button">Arrêter</button>
+          </div>
+          <div class="callout" style="margin-top:14px" id="cfg-agents-hint">
+            <span id="hint-ico"></span>
+            <div>Tu utilises un agent de code (Qwen Code, Nemesis…) ? Active son intégration dans
+              <a href="/next/integrations">Intégration agents IA</a> : une seule discussion web, un contexte géré, des
+              appels d'outils natifs. Ces intégrations ignorent « Nouvelle discussion à chaque requête ».</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><div><h3 id="h-api">L’API</h3><p class="desc">Le proxy parle OpenAI. Rien d'autre.</p></div></div>
+          <div class="callout" style="margin-bottom:16px">
+            <span id="fmt-ico"></span>
+            <div>Le corps de la requête est <b>strictement OpenAI</b> : <code>model</code>, <code>messages</code>,
+              <code>tools</code>, <code>stream</code>. Aucune variable propriétaire (<code>fresh_chat</code> n'existe
+              plus). L'agent se déclare par un en-tête HTTP, que tous les clients savent envoyer.</div>
+          </div>
+          <div class="section-title" style="font-size:10.5px;font-weight:780;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin:0 0 6px">Appel minimal</div>
+          <pre class="session-box mono" id="curl-example" style="white-space:pre-wrap;margin:0"></pre>
+          <div class="section-title" style="font-size:10.5px;font-weight:780;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin:18px 0 6px">Modèles acceptés</div>
+          <p class="hint" style="margin:0 0 10px">Identifiants reconnus par le proxy (le fournisseur est déduit du modèle).</p>
+          <div id="cfg-models" class="stack" style="gap:14px"><div class="skeleton" style="height:60px"></div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="/next/admin.js?v=5.6.4"></script>
+<script>
+"use strict";
+$("h-tabs").insertAdjacentHTML("afterbegin", icon("tabs"));
+$("h-settings").insertAdjacentHTML("afterbegin", icon("sliders"));
+$("h-api").insertAdjacentHTML("afterbegin", icon("terminal"));
+$("hint-ico").outerHTML = icon("info", "");
+$("fmt-ico").outerHTML = icon("shield", "");
+
+$("curl-example").textContent = [
+  `curl ${location.origin}/v1/chat/completions \\`,
+  `  -H "Content-Type: application/json" \\`,
+  `  -H "X-NemApi-Agent: qwen-code" \\   # facultatif : déclare l'agent`,
+  `  -d '{"model":"DeepSeek",`,
+  `       "messages":[{"role":"user","content":"Bonjour"}]}'`,
+].join("\n");
+
+let catalog = [];
+const SWITCHES = { "cfg-stream": "stream_enabled" };
+
+function renderProviders(state) {
+  if (!catalog.length) { setHTML("cfg-providers", '<div class="empty">Aucun provider actif. Importe un fichier JSON depuis l’application Android.</div>'); return; }
+  const byProvider = {};
+  for (const tab of state.tabs || []) (byProvider[tab.provider] ||= []).push(tab);
+  setHTML("cfg-providers", catalog.map((p) => {
+    const tabs = byProvider[p.id] || [];
+    const selected = state.targetTabs?.[p.id];
+    const color = PCOLORS[p.id] || "var(--accent)";
+    if (!tabs.length) {
+      return `<div class="provider" style="--pcolor:${color}"><div class="head">${providerBadge(p.id)}<span class="badge">Hors ligne</span></div>
+        <div class="purl">Ouvre l’application ${esc(providerLabel(p.id))} sur le téléphone.</div></div>`;
+    }
+    return tabs.map((tab) => {
+      const on = selected === tab.id;
+      return `<div class="provider" style="--pcolor:${color}">
+        <div class="head">${providerBadge(p.id)}<span class="badge ${on ? "ok" : ""}">${on ? "Actif" : "Disponible"}</span></div>
+        <div class="purl" title="${esc(tab.url)}">${esc(tab.title || tab.url)}</div>
+        <button type="button" class="btn btn-sm btn-block ${on ? "btn-ok" : ""}" data-provider="${esc(p.id)}" data-tab="${tab.id}" ${on ? "disabled" : ""}>${on ? "Sélectionné" : "Utiliser cet onglet"}</button></div>`;
+    }).join("");
+  }).join(""));
+}
+
+function renderModels() {
+  setHTML("cfg-models", catalog.map((p) => `<div><div style="margin-bottom:8px">${providerBadge(p.id)}</div>
+    <div class="model-list">${(p.models || []).map((m) => `<span class="model-chip">${esc(m)}</span>`).join("") || '<span class="model-chip">—</span>'}</div></div>`).join(""));
+}
+
+$("cfg-providers").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-tab]");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    throw new Error("Choisis le provider dans l’application Android, serveur arrêté.");
+    toast(`${providerLabel(btn.dataset.provider)} : application sélectionnée`, "ok");
+  } catch (err) {
+    btn.disabled = false;
+    toast("Erreur : " + err.message, "error");
+  }
+});
+
+for (const [id, key] of Object.entries(SWITCHES)) {
+  bindSwitch(id, (checked) => post("/settings", { [key]: checked }), {
+    onDone: (checked) => toast(`${$(id).closest(".setting").querySelector(".s-title").textContent} : ${checked ? "activé" : "désactivé"}`, "ok", 1800),
+  });
+}
+$("cfg-stop").addEventListener("click", async () => {
+  if (!(await confirmDialog("Arrêter les jobs ?", "Toutes les requêtes en attente ou en cours seront annulées.", { ok: "Arrêter", danger: true }))) return;
+  try {
+    const r = await post("/stop");
+    toast(r.stopped ? "Arrêt demandé" : "Aucune génération arrêtée", "ok");
+  } catch (err) {
+    toast("Erreur : " + err.message, "error");
+  }
+});
+
+NemUI.onState(renderProviders);
+
+poll(async () => {
+  const [providers, settings] = await Promise.all([catalog.length ? null : api("/providers"), api("/settings")]);
+  if (providers) {
+    catalog = providers.providers;
+    renderModels();
+    if (NemUI.state) renderProviders(NemUI.state);
+  }
+  for (const [id, key] of Object.entries(SWITCHES)) {
+    const el = $(id);
+    if (el && !el.disabled && el.checked !== !!settings[key]) el.checked = !!settings[key];
+  }
+}, 2500);
+</script>
+</body>
+</html>

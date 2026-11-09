@@ -26,16 +26,14 @@ class ProviderRepository(context: Context) {
     fun get(providerName: String): ProviderConfig? =
         getAll().firstOrNull { it.provider.equals(providerName, ignoreCase = true) }
 
+    /** Replace only on explicit user import; old installations are never migrated destructively. */
     @Synchronized
-    fun save(config: ProviderConfig) {
+    fun replace(config: ProviderConfig) {
         ProviderConfigParser.validate(config)
-        val configs = getAll().toMutableList()
-        val existingIndex = configs.indexOfFirst { it.provider.equals(config.provider, ignoreCase = true) }
-        if (existingIndex >= 0) configs[existingIndex] = config else configs.add(config)
-        persist(configs)
-        if (preferences.getString(ACTIVE_PROVIDER_KEY, null) == null) {
-            preferences.edit().putString(ACTIVE_PROVIDER_KEY, config.provider).apply()
-        }
+        check(preferences.edit()
+            .putString(PROVIDERS_KEY, gson.toJson(listOf(config)))
+            .putString(ACTIVE_PROVIDER_KEY, config.provider)
+            .commit()) { "Impossible d’enregistrer le provider." }
     }
 
     @Synchronized

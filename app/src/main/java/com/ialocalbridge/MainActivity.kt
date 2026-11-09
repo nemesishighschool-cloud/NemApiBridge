@@ -179,13 +179,13 @@ class MainActivity : AppCompatActivity() {
             val config = ProviderConfigParser.parse(readProviderFile(uri))
             val nameInput = EditText(this).apply { setText(config.provider); hint = "Nom du provider"; setSingleLine(true) }
             AlertDialog.Builder(this).setTitle("Nommer le provider")
-                .setMessage("Le nom sera aussi l’identifiant du modèle dans l’API.")
+                .setMessage("Le nom sera aussi l’identifiant du modèle dans l’API. Un seul provider est conservé : enregistrer remplace les providers existants. Exportez vos fichiers JSON avant de continuer si nécessaire.")
                 .setView(nameInput).setNegativeButton("Annuler", null)
                 .setPositiveButton("Enregistrer") { _, _ ->
                     try {
                         val namedConfig = config.copy(provider = nameInput.text.toString().trim())
                         ProviderConfigParser.validate(namedConfig)
-                        providerRepository.save(namedConfig)
+                        providerRepository.replace(namedConfig)
                         providerRepository.setActive(namedConfig.provider)
                         getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE).edit()
                             .putString(ACTIVE_PROVIDER_KEY, namedConfig.provider).apply()

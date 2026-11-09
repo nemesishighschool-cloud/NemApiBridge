@@ -18,6 +18,10 @@ import java.io.PipedInputStream
 import java.io.PipedOutputStream
 import java.net.InetAddress
 import java.util.UUID
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.atomic.AtomicLong
 
 class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0.0", port) {
@@ -26,7 +30,10 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
     private val coordinator = AutomationCoordinator(appContext)
     private val providerRepository = ProviderRepository(appContext)
     private val apiKeyStore = ApiKeyStore(appContext)
+    private val webKeyStore = WebApiKeyStore(appContext)
     private val fileUploader = FileUploader()
+    private val nemStats = NemStatsStore(appContext)
+    private val agentIntegrations = AgentIntegrationManager(appContext)
 
     @Volatile
     private var streamEnabled = appContext.getSharedPreferences(SETTINGS_PREFERENCES, Context.MODE_PRIVATE)
@@ -43,8 +50,17 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         }
 
         val uri = session.uri
+        val sensitiveWeb = uri.startsWith("/web/nem/") || uri == "/next" || uri.startsWith("/next/")
+        if (sensitiveWeb && !isSameOriginOrDirect(session)) {
+            return jsonError(Response.Status.FORBIDDEN, "forbidden_origin", "L’administration web refuse les requêtes provenant d’un autre site.")
+        }
         if (session.method == Method.OPTIONS) {
-            return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "").also(::addCORSHeaders)
+            return if (sensitiveWeb) newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "")
+            else newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "").also(::addCORSHeaders)
+        }
+        // Development preview only. The existing production interface stays unchanged.
+        if (session.method == Method.GET && (uri == "/next" || uri.startsWith("/next/"))) {
+            return stagedWebAsset(uri).also { it.addHeader("Cache-Control", "no-store") }
         }
         if (session.method == Method.GET && uri in setOf("/", "/index.html", "/chat", "/admin")) {
             return newFixedLengthResponse(Response.Status.OK, MIME_HTML, WebInterface.getHtml(appContext))
@@ -69,17 +85,40 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
 
         val response = try {
             when (uri) {
+                "/web/nem/providers" -> if (session.method == Method.GET) nemProviders() else methodNotAllowed("GET")
+                "/web/nem/extension/state" -> if (session.method == Method.GET) nemState() else methodNotAllowed("GET")
+                "/web/nem/settings" -> nemSettings(session)
+                "/web/nem/stats" -> if (session.method == Method.GET) nemJson(nemStats.report(uptimeSeconds())) else methodNotAllowed("GET")
+                "/web/nem/stats/clear" -> if (session.method == Method.POST) { drainBody(session); nemStats.clear(); nemJson(JSONObject().put("ok", true)) } else methodNotAllowed("POST")
+                "/web/nem/agent-integrations" -> if (session.method == Method.GET) nemJson(agentIntegrations.snapshot()) else methodNotAllowed("GET")
+                "/web/nem/sessions/reset" -> if (session.method == Method.POST) {
+                    drainBody(session)
+                    try { nemJson(JSONObject().put("reset", agentIntegrations.reset())) }
+                    catch (e: IllegalArgumentException) { throw AutomationException("user_intervention_required", e.message ?: "Requête en cours.") }
+                } else methodNotAllowed("POST")
+                "/web/nem/api-keys/config" -> if (session.method == Method.GET) nemJson(JSONObject().put("require_auth", apiKeyRequired()).put("key_count", webKeyStore.list().size + if (apiKeyStore.get() == null) 0 else 1)) else methodNotAllowed("GET")
+                "/web/nem/api-keys" -> nemApiKeys(session)
+                "/web/nem/api-keys/enable", "/web/nem/api-keys/disable" -> if (session.method == Method.POST) {
+                    drainBody(session)
+                    apiKeyStore.getOrCreate()
+                    appContext.getSharedPreferences(SETTINGS_PREFERENCES, Context.MODE_PRIVATE).edit()
+                        .putBoolean(API_KEY_REQUIRED_KEY, uri.endsWith("/enable")).apply()
+                    nemJson(JSONObject().put("require_auth", apiKeyRequired()))
+                } else methodNotAllowed("POST")
+                "/web/nem/health" -> if (session.method == Method.GET) nemJson(JSONObject().put("app_version", "1.1.0-dev")) else methodNotAllowed("GET")
+                "/web/nem/stop" -> if (session.method == Method.POST) { drainBody(session); handleStopRequest() } else methodNotAllowed("POST")
                 "/web/models" -> if (session.method == Method.GET) handleModelsRequest() else methodNotAllowed("GET")
                 "/web/status" -> if (session.method == Method.GET) handleStatusRequest() else methodNotAllowed("GET")
                 "/web/stats" -> if (session.method == Method.GET) handleStatsRequest() else methodNotAllowed("GET")
                 "/web/network" -> if (session.method == Method.GET) handleNetworkRequest() else methodNotAllowed("GET")
                 "/web/config" -> handleConfigRequest(session)
                 "/web/chat" -> if (session.method == Method.POST) handleChatCompletions(session) else methodNotAllowed("POST")
-                "/web/stop" -> if (session.method == Method.POST) handleStopRequest() else methodNotAllowed("POST")
-                "/v1/models" -> if (session.method == Method.GET) handleModelsRequest()
+                "/web/stop" -> if (session.method == Method.POST) { drainBody(session); handleStopRequest() } else methodNotAllowed("POST")
+                "/v1/models", "/models" -> if (session.method == Method.GET) handleModelsRequest()
                     else methodNotAllowed("GET")
-                "/v1/chat/completions" -> if (session.method == Method.POST) handleChatCompletions(session)
+                "/v1/chat/completions", "/chat/completions" -> if (session.method == Method.POST) handleChatCompletions(session)
                     else methodNotAllowed("POST")
+                "/v1/responses", "/responses" -> if (session.method == Method.POST) handleChatCompletions(session, true) else methodNotAllowed("POST")
                 "/status" -> if (session.method == Method.GET) handleStatusRequest()
                     else methodNotAllowed("GET")
                 "/stats" -> if (session.method == Method.GET) handleStatsRequest()
@@ -89,9 +128,15 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                     else methodNotAllowed("GET, POST")
                 "/upload" -> if (session.method == Method.POST) handleUploadRequest(session)
                     else methodNotAllowed("POST")
-                "/stop" -> if (session.method == Method.GET || session.method == Method.POST) handleStopRequest()
+                "/stop" -> if (session.method == Method.GET || session.method == Method.POST) { if (session.method == Method.POST) drainBody(session); handleStopRequest() }
                     else methodNotAllowed("GET, POST")
-                else -> jsonError(Response.Status.NOT_FOUND, "not_found", "Endpoint introuvable.")
+                else -> if (uri.startsWith("/web/nem/agent-integrations/") && session.method == Method.POST) {
+                    try { nemJson(agentIntegrations.update(uri.substringAfterLast('/'), parseJsonBody(session))) }
+                    catch (e: IllegalArgumentException) { throw AutomationException("invalid_request", e.message ?: "Intégration invalide.") }
+                } else if (uri.startsWith("/web/nem/api-keys/") && session.method == Method.DELETE) {
+                    if (webKeyStore.delete(uri.substringAfterLast('/'))) nemJson(JSONObject().put("deleted", true))
+                    else jsonError(Response.Status.NOT_FOUND, "not_found", "Clé introuvable ou gérée sur le téléphone.")
+                } else jsonError(Response.Status.NOT_FOUND, "not_found", "Endpoint introuvable.")
             }
         } catch (e: AutomationException) {
             val status = when (e.errorCode) {
@@ -106,11 +151,100 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             Log.e(TAG, "Request failed: ${e.javaClass.simpleName}")
             jsonError(Response.Status.INTERNAL_ERROR, "internal_error", "La requête n’a pas pu être traitée.")
         }
-        return response.also(::addCORSHeaders)
+        return if (sensitiveWeb) response.also { it.addHeader("Cache-Control", "no-store") } else response.also(::addCORSHeaders)
     }
 
-    private fun handleChatCompletions(session: IHTTPSession): Response {
-        val request = parseJsonBody(session)
+    private fun stagedWebAsset(uri: String): Response {
+        val route = uri.removePrefix("/next").trimStart('/')
+        val file = when (route) {
+            "", "index.html" -> "admin.html"
+            "chat" -> "chat.html"
+            "analytics" -> "analytics.html"
+            "config" -> "config.html"
+            "integrations" -> "integrations.html"
+            "api-keys-page" -> "api-keys.html"
+            "admin.css", "admin.js" -> route
+            "icons/logo-16.png", "icons/logo-32.png", "icons/logo-48.png", "icons/logo-128.png", "icons/logo.svg" -> route
+            "icons/providers/deepseek.png", "icons/providers/chatgpt.png", "icons/providers/claude.png",
+            "icons/providers/gemini.png", "icons/providers/qwen.png", "icons/providers/kimi.png", "icons/providers/zai.png" -> route
+            else -> return jsonError(Response.Status.NOT_FOUND, "not_found", "Fichier introuvable.")
+        }
+        val mime = when (file.substringAfterLast('.')) {
+            "html" -> "text/html; charset=utf-8"
+            "js" -> "application/javascript; charset=utf-8"
+            "css" -> "text/css; charset=utf-8"
+            "png" -> "image/png"
+            "svg" -> "image/svg+xml"
+            else -> "application/octet-stream"
+        }
+        return newChunkedResponse(Response.Status.OK, mime, appContext.assets.open("nemapi-stage/$file"))
+    }
+
+    private fun nemJson(obj: JSONObject): Response = newFixedLengthResponse(Response.Status.OK, MIME_JSON, obj.toString())
+
+    private fun nemProviders(): Response {
+        val config = providerRepository.getActiveName()?.let(providerRepository::get)
+        val providers = JSONArray()
+        if (config != null) providers.put(JSONObject().put("id", config.provider.lowercase())
+            .put("models", JSONArray().put(config.provider)).put("name", config.provider))
+        return nemJson(JSONObject().put("providers", providers))
+    }
+
+    private fun nemState(): Response {
+        val service = ClickAccessibilityService.instance
+        val config = providerRepository.getActiveName()?.let(providerRepository::get)
+        val current = if (service != null) runBlocking(Dispatchers.Main.immediate) { service.currentPackageName() } else null
+        val tabs = JSONArray()
+        val targets = JSONObject()
+        if (config != null && current == config.packageName) {
+            val id = config.provider.lowercase()
+            tabs.put(JSONObject().put("id", 1).put("provider", id).put("title", config.packageName).put("url", ""))
+            targets.put(id, 1)
+        }
+        return nemJson(JSONObject().put("connected", service != null).put("busy", AutomationCoordinator.isRunning)
+            .put("tabs", tabs).put("targetTabs", targets).put("logs", JSONArray()))
+    }
+
+    private fun nemApiKeys(session: IHTTPSession): Response = when (session.method) {
+        Method.GET -> {
+            val keys = JSONArray()
+            // The pre-existing Android key remains managed on the device and is not disclosed here.
+            if (apiKeyStore.get() != null) keys.put(JSONObject().put("id", "android-key").put("name", "Clé Android (gérée sur le téléphone)").put("key", "").put("created_at", "—"))
+            webKeyStore.list().forEach(keys::put)
+            nemJson(JSONObject().put("require_auth", apiKeyRequired()).put("api_keys", keys))
+        }
+        Method.POST -> {
+            val name = parseJsonBody(session).optString("name", "").trim()
+            try {
+                val key = webKeyStore.create(name)
+                nemJson(JSONObject().put("api_key", key.getString("key")))
+            } catch (e: IllegalArgumentException) {
+                throw AutomationException("invalid_request", e.message ?: "Nom de clé invalide.")
+            }
+        }
+        else -> methodNotAllowed("GET, POST")
+    }
+
+    private fun nemSettings(session: IHTTPSession): Response {
+        when (session.method) {
+            Method.GET -> Unit
+            Method.POST -> {
+                val body = parseJsonBody(session)
+                if (!body.has("stream_enabled") || body.length() != 1 || body.opt("stream_enabled") !is Boolean) {
+                    throw AutomationException("invalid_request", "Seul le réglage stream_enabled est actuellement disponible.")
+                }
+                streamEnabled = body.getBoolean("stream_enabled")
+                appContext.getSharedPreferences(SETTINGS_PREFERENCES, Context.MODE_PRIVATE).edit()
+                    .putBoolean(STREAM_ENABLED_KEY, streamEnabled).apply()
+            }
+            else -> return methodNotAllowed("GET, POST")
+        }
+        return nemJson(JSONObject().put("stream_enabled", streamEnabled))
+    }
+
+    private fun handleChatCompletions(session: IHTTPSession, responseMode: Boolean = false): Response {
+        val incoming = parseJsonBody(session)
+        val request = if (responseMode) ResponsesCodec.toChat(incoming) else incoming
         val messages = request.optJSONArray("messages")
             ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_request", "Le champ messages est requis.")
         if (messages.length() == 0) {
@@ -118,7 +252,8 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         }
 
         val modelName = request.optString("model").ifBlank { providerRepository.getActiveName().orEmpty() }
-        val config = providerRepository.get(modelName)
+        val config = providerRepository.get(modelName) ?: providerRepository.getActiveName()?.let(providerRepository::get)
+            ?.takeIf { modelName.equals(it.provider + "-chat", ignoreCase = true) }
             ?: return jsonError(Response.Status.BAD_REQUEST, "model_not_found", "Le modèle '$modelName' n’est pas configuré.")
 
         val messagesPrompt = buildPrompt(messages, config.maxHistoryChars)
@@ -129,6 +264,9 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             else -> throw AutomationException("invalid_request", "Le champ tools doit être un tableau.")
         }
         val toolChoice = request.opt("tool_choice")
+        val agent = agentIntegrations.resolve(session.headers, messages)
+        if (agent != null && !agent.tools && tools != null && tools.length() > 0)
+            throw AutomationException("unsupported_tool", "Les appels d’outils sont désactivés pour cette intégration.")
         val toolInstruction = buildToolInstruction(tools, toolChoice)
         val prompt = if (toolInstruction.isEmpty()) messagesPrompt else "$messagesPrompt\n\n$toolInstruction"
         val requestedStream = request.optBoolean("stream", false)
@@ -136,27 +274,78 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             return jsonError(Response.Status.BAD_REQUEST, "streaming_disabled", "Le streaming est désactivé dans la configuration.")
         }
 
-        val result = runBlocking(Dispatchers.IO) {
-            coordinator.processQuestion(config, prompt)
+        fun screenMarker(): String? {
+            val service = ClickAccessibilityService.instance ?: return null
+            return try {
+                runBlocking(Dispatchers.Main.immediate) {
+                    if (service.currentPackageName() != config.packageName) null
+                    else service.readLatestText(config.packageName, config.selectors.assistantMessage, "assistant_message").takeLast(1024).takeIf { it.isNotBlank() }
+                }
+            } catch (e: Exception) { Log.w(TAG, "Agent screen marker unavailable: ${(e as? AutomationException)?.errorCode ?: e.javaClass.simpleName}"); null }
         }
-        totalRequests.incrementAndGet()
-        val promptTokens = estimateTokens(prompt)
-        val completionTokens = estimateTokens(result)
-        totalPromptTokens.addAndGet(promptTokens.toLong())
-        totalCompletionTokens.addAndGet(completionTokens.toLong())
-
-        val parsed = if (tools == null || tools.length() == 0 || toolChoice == "none") null else ToolParser.parseToolCalls(result, (0 until tools.length()).mapNotNull { i -> tools.optJSONObject(i)?.let { (it.optJSONObject("function") ?: it).optString("name") } }.toSet())
-        val requiredName = (toolChoice as? JSONObject)?.optJSONObject("function")?.optString("name")
-        if ((toolChoice == "required" || requiredName != null) &&
-            (parsed == null || parsed.toolCalls.isEmpty() || (requiredName != null && parsed.toolCalls.any { it.name != requiredName }))) {
-            throw AutomationException("tool_call_required", "Le fournisseur n’a pas produit l’appel d’outil demandé dans un format reconnu.")
+        fun complete(): CompletionData = agentIntegrations.serialized {
+          try {
+            val plan = agentIntegrations.plan(agent, config.provider, messages, tools, screenMarker(), prompt) { tail ->
+                val text = buildPrompt(tail, config.maxHistoryChars, requireUser = false)
+                if (tools != null && tools.length() > 0) text + "\n\nReminder: to call a tool, use a fenced tool block with <tool>{JSON}</tool>." else text
+            }
+            val sentPrompt = plan.prompt
+            val result = runBlocking(Dispatchers.IO) { coordinator.processQuestion(config, sentPrompt) }
+            totalRequests.incrementAndGet()
+            val promptTokens = estimateTokens(sentPrompt)
+            val completionTokens = estimateTokens(result)
+            totalPromptTokens.addAndGet(promptTokens.toLong())
+            totalCompletionTokens.addAndGet(completionTokens.toLong())
+            try { nemStats.record(config.provider, promptTokens, completionTokens) } catch (e: Exception) {
+                Log.w(TAG, "Could not persist request statistics", e)
+            }
+            val names = tools?.let { array -> (0 until array.length()).mapNotNull { i ->
+                array.optJSONObject(i)?.let { (it.optJSONObject("function") ?: it).optString("name") }
+            }.toSet() }
+            val parsed = when {
+                toolChoice == "none" -> null
+                tools != null && tools.length() > 0 -> ToolParser.parseToolCalls(result, names)
+                agent?.nativeTools == true -> ToolParser.parseToolCalls(result, null, generic = true)
+                else -> null
+            }
+            val requiredName = (toolChoice as? JSONObject)?.optJSONObject("function")?.optString("name")
+            if ((toolChoice == "required" || requiredName != null) &&
+                (parsed == null || parsed.toolCalls.isEmpty() || (requiredName != null && parsed.toolCalls.any { it.name != requiredName }))) {
+                throw AutomationException("tool_call_required", "Le fournisseur n’a pas produit l’appel d’outil demandé dans un format reconnu.")
+            }
+            val assistant = JSONObject().put("role", "assistant")
+            if (parsed == null) assistant.put("content", result) else {
+                assistant.put("content", parsed.remainingText.trim())
+                val calls = JSONArray()
+                parsed.toolCalls.forEach { call -> calls.put(JSONObject().put("id", call.id).put("type", "function")
+                    .put("function", JSONObject().put("name", call.name).put("arguments", call.arguments))) }
+                assistant.put("tool_calls", calls)
+            }
+            var finalMarker: String? = null
+            if (agent?.incremental == true) {
+                for (attempt in 0 until 15) {
+                    finalMarker = screenMarker()
+                    if (finalMarker != null) break
+                    Thread.sleep(200)
+                }
+            }
+            agentIntegrations.completed(agent, config.provider, messages, tools, assistant, finalMarker)
+            CompletionData(result, parsed, promptTokens, completionTokens)
+          } catch (e: Throwable) {
+            agentIntegrations.invalidate()
+            throw e
+          }
         }
         return if (requestedStream) {
-            buildStreamResponse(modelName, result, parsed, promptTokens, completionTokens)
+            if (responseMode) buildResponsesStream(modelName, ::complete) else buildStreamResponse(modelName, ::complete)
         } else {
-            buildJsonResponse(modelName, result, parsed, promptTokens, completionTokens)
+            val done = complete()
+            if (responseMode) nemJson(responsesOutput(ResponsesCodec.newResponseId(), modelName, done))
+            else buildJsonResponse(modelName, done.result, done.parsed, done.promptTokens, done.completionTokens)
         }
     }
+
+    private data class CompletionData(val result: String, val parsed: ToolParser.ToolCallResult?, val promptTokens: Int, val completionTokens: Int)
 
     private fun buildToolInstruction(tools: JSONArray?, choice: Any?): String {
         if (tools == null || tools.length() == 0) {
@@ -209,7 +398,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         return false
     }
 
-    private fun buildPrompt(messages: JSONArray, maxHistoryChars: Int): String {
+    private fun buildPrompt(messages: JSONArray, maxHistoryChars: Int, requireUser: Boolean = true): String {
         val normalized = mutableListOf<Pair<String, String>>()
         val callNames = mutableMapOf<String, String>()
         for (index in 0 until messages.length()) {
@@ -249,7 +438,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             normalized.add(role to "$label: $text$toolCalls")
         }
         val latestUserIndex = normalized.indexOfLast { it.first == "user" }
-        if (latestUserIndex < 0) {
+        if (latestUserIndex < 0 && requireUser) {
             throw AutomationException("invalid_request", "La conversation doit contenir au moins un message user.")
         }
 
@@ -324,20 +513,99 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON, response.toString())
     }
 
-    private fun buildStreamResponse(
-        model: String,
-        rawResult: String,
-        parsed: ToolParser.ToolCallResult?,
-        promptTokens: Int,
-        completionTokens: Int
-    ): Response {
-        val chatId = "chatcmpl-${UUID.randomUUID().toString().take(12)}"
-        val content = parsed?.remainingText?.trim().orEmpty().ifEmpty { if (parsed == null) rawResult else "" }
+    private fun responsesOutput(id: String, model: String, done: CompletionData): JSONObject {
+        val text = done.parsed?.remainingText?.trim() ?: done.result
+        val calls = done.parsed?.toolCalls?.map { ResponsesCodec.ToolParserCall(it.id, it.name, it.arguments) }.orEmpty()
+        return ResponsesCodec.output(id, model, text, calls, done.promptTokens, done.completionTokens)
+    }
+
+    private fun buildResponsesStream(model: String, complete: () -> CompletionData): Response {
+        val responseId = ResponsesCodec.newResponseId()
         val stream = PipedInputStream(STREAM_BUFFER_SIZE)
         val output = PipedOutputStream(stream)
+        val task = FutureTask { complete() }
+        Thread({
+            fun event(name: String, body: JSONObject) {
+                body.put("type", name)
+                output.write("event: $name\ndata: $body\n\n".toByteArray(Charsets.UTF_8))
+                output.flush()
+            }
+            try {
+                val created = JSONObject().put("id", responseId).put("object", "response").put("model", model)
+                    .put("status", "in_progress").put("output", JSONArray()).put("created_at", System.currentTimeMillis()/1000)
+                event("response.created", JSONObject().put("response", created))
+                event("response.in_progress", JSONObject().put("response", created))
+                Thread(task, "api-bridge-responses-generation").apply { isDaemon = true; start() }
+                lateinit var done: CompletionData
+                while (true) {
+                    try { done = task.get(10, TimeUnit.SECONDS); break }
+                    catch (_: TimeoutException) { output.write(": keepalive\n\n".toByteArray(Charsets.UTF_8)); output.flush() }
+                }
+                val result = responsesOutput(responseId, model, done)
+                val items = result.getJSONArray("output")
+                for (i in 0 until items.length()) {
+                    val item = items.getJSONObject(i)
+                    val itemId = item.getString("id")
+                    val added = JSONObject(item.toString()).put("status", "in_progress")
+                    if (item.getString("type") == "message") added.put("content", JSONArray()) else added.put("arguments", "")
+                    event("response.output_item.added", JSONObject().put("output_index", i).put("item", added))
+                    if (item.getString("type") == "message") {
+                        val part = item.getJSONArray("content").getJSONObject(0)
+                        val text = part.getString("text")
+                        event("response.content_part.added", JSONObject().put("item_id", itemId).put("output_index", i).put("content_index", 0)
+                            .put("part", JSONObject().put("type", "output_text").put("text", "").put("annotations", JSONArray())))
+                        var offset = 0
+                        while (offset < text.length) {
+                            val count = minOf(240, text.codePointCount(offset, text.length))
+                            val next = text.offsetByCodePoints(offset, count)
+                            event("response.output_text.delta", JSONObject().put("item_id", itemId).put("output_index", i).put("content_index", 0).put("delta", text.substring(offset, next)))
+                            offset = next
+                        }
+                        event("response.output_text.done", JSONObject().put("item_id", itemId).put("output_index", i).put("content_index", 0).put("text", text))
+                        event("response.content_part.done", JSONObject().put("item_id", itemId).put("output_index", i).put("content_index", 0).put("part", part))
+                    } else {
+                        val args = item.getString("arguments")
+                        event("response.function_call_arguments.delta", JSONObject().put("item_id", itemId).put("output_index", i).put("delta", args))
+                        event("response.function_call_arguments.done", JSONObject().put("item_id", itemId).put("output_index", i).put("arguments", args))
+                    }
+                    event("response.output_item.done", JSONObject().put("output_index", i).put("item", item))
+                }
+                event("response.completed", JSONObject().put("response", result))
+                output.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8)); output.flush()
+            } catch (e: ExecutionException) {
+                val cause = e.cause
+                val code = (cause as? AutomationException)?.errorCode ?: "internal_error"
+                val message = if (cause is AutomationException) cause.message else "La requête n’a pas pu être traitée."
+                try { event("error", JSONObject().put("error", JSONObject().put("code", code).put("message", message))) } catch (_: Exception) { }
+            } catch (_: Exception) {
+                Log.i(TAG, "Responses SSE client disconnected")
+            } finally { task.cancel(true); try { output.close() } catch (_: Exception) { } }
+        }, "api-bridge-responses-sse").apply { isDaemon = true; start() }
+        return newChunkedResponse(Response.Status.OK, MIME_EVENT_STREAM, stream)
+    }
+
+    private fun buildStreamResponse(model: String, complete: () -> CompletionData): Response {
+        val chatId = "chatcmpl-${UUID.randomUUID().toString().take(12)}"
+        val stream = PipedInputStream(STREAM_BUFFER_SIZE)
+        val output = PipedOutputStream(stream)
+        val task = FutureTask { complete() }
         Thread({
             try {
                 writeSseChunk(output, chatId, model, JSONObject().put("role", "assistant").put("content", ""))
+                Thread(task, "api-bridge-generation").apply { isDaemon = true; start() }
+                lateinit var done: CompletionData
+                while (true) {
+                    try {
+                        done = task.get(10, TimeUnit.SECONDS)
+                        break
+                    } catch (_: TimeoutException) {
+                        writeSseChunk(output, chatId, model, JSONObject().put("content", ""))
+                    }
+                }
+                val parsed = done.parsed
+                val promptTokens = done.promptTokens
+                val completionTokens = done.completionTokens
+                val content = parsed?.remainingText?.trim().orEmpty().ifEmpty { if (parsed == null) done.result else "" }
                 if (parsed != null && parsed.toolCalls.isNotEmpty()) {
                     writeContentChunks(output, chatId, model, content)
                     val calls = JSONArray()
@@ -381,9 +649,18 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                     )
                 output.write("data: ${finalChunk}\n\ndata: [DONE]\n\n".toByteArray(Charsets.UTF_8))
                 output.flush()
+            } catch (e: ExecutionException) {
+                val cause = e.cause
+                val code = (cause as? AutomationException)?.errorCode ?: "internal_error"
+                val message = if (cause is AutomationException) cause.message else "La requête n’a pas pu être traitée."
+                try {
+                    output.write(("data: " + JSONObject().put("error", JSONObject().put("code", code).put("message", message)) + "\n\ndata: [DONE]\n\n").toByteArray(Charsets.UTF_8))
+                    output.flush()
+                } catch (_: Exception) { }
             } catch (e: Exception) {
                 Log.i(TAG, "SSE client disconnected")
             } finally {
+                task.cancel(true)
                 try {
                     output.close()
                 } catch (_: Exception) {
@@ -565,6 +842,11 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         }
     }
 
+    private fun drainBody(session: IHTTPSession) {
+        try { session.parseBody(HashMap()) }
+        catch (_: Exception) { throw AutomationException("invalid_request", "Impossible de lire le corps de la requête.") }
+    }
+
     private fun parseJsonBody(session: IHTTPSession): JSONObject {
         val files = HashMap<String, String>()
         val body = try {
@@ -589,14 +871,14 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
 
     private fun authorized(session: IHTTPSession): Boolean {
         if (!apiKeyRequired()) return true
+        val authorization = session.headers.entries.firstOrNull { it.key.equals("authorization", ignoreCase = true) }?.value
+        val supplied = if (authorization?.startsWith("Bearer ", ignoreCase = true) == true) {
+            authorization.substringAfter(' ').trim()
+        } else session.headers.entries.firstOrNull { it.key.equals("x-api-key", ignoreCase = true) }?.value?.trim().orEmpty()
+        if (supplied.isBlank()) return false
         val expected = apiKeyStore.get()
-            ?: throw IllegalStateException("La clé API locale n’est pas configurée.")
-        val authorization = session.headers.entries
-            .firstOrNull { it.key.equals("authorization", ignoreCase = true) }
-            ?.value ?: return false
-        if (!authorization.startsWith("Bearer ", ignoreCase = true)) return false
-        val supplied = authorization.substringAfter(' ').trim()
-        return constantTimeEquals(expected, supplied)
+        if (expected != null && constantTimeEquals(expected, supplied)) return true
+        return webKeyStore.list().any { constantTimeEquals(it.getString("key"), supplied) }
     }
 
     private fun constantTimeEquals(expected: String, supplied: String): Boolean {
@@ -604,6 +886,12 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         var difference = 0
         for (index in expected.indices) difference = difference or (expected[index].code xor supplied[index].code)
         return difference == 0
+    }
+
+    private fun isSameOriginOrDirect(session: IHTTPSession): Boolean {
+        val origin = session.headers["origin"] ?: return true
+        val host = session.headers["host"] ?: return false
+        return origin.equals("http://$host", ignoreCase = true) || origin.equals("https://$host", ignoreCase = true)
     }
 
     private fun isLocalClient(session: IHTTPSession): Boolean {
@@ -636,8 +924,8 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
 
     private fun addCORSHeaders(response: Response) {
         response.addHeader("Access-Control-Allow-Origin", "*")
-        response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        response.addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        response.addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        response.addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-NemApi-Agent")
         response.addHeader("Cache-Control", "no-store")
     }
 

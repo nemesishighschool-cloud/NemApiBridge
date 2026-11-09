@@ -42,6 +42,24 @@ class ToolParserIntegrationTest {
         assertEquals("", parsed.remainingText)
         assertEquals("main.py", JSONObject(parsed.toolCalls.single().arguments).getString("file_path"))
     }
+    @Test fun parsesQwenAnthropicAndJsonFences() {
+        val qwen = "<tool_call><function=write_file><parameter=file_path>src/a.py</parameter><parameter=content>print(1)</parameter></function></tool_call>"
+        val a = ToolParser.parseToolCalls(qwen, setOf("write_file"))!!
+        assertEquals("", a.remainingText)
+        assertEquals("src/a.py", JSONObject(a.toolCalls.single().arguments).getString("file_path"))
+        val anthropic = "<invoke name=\"read_file\"><parameter name=\"file_path\">a</parameter></invoke>"
+        assertEquals("a", JSONObject(ToolParser.parseToolCalls(anthropic, setOf("read_file"))!!.toolCalls.single().arguments).getString("file_path"))
+        val json = "```json\n{\"name\":\"read_file\",\"arguments\":{\"file_path\":\"a\"}}\n```"
+        assertEquals("", ToolParser.parseToolCalls(json, setOf("read_file"))!!.remainingText)
+        assertNull(ToolParser.parseToolCalls(json, setOf("different")))
+    }
+    @Test fun parsesMultipleDeepseekV3Calls() {
+        val raw = "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>read_file\n{\"file_path\":\"a.py\"}<｜tool▁call▁end｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>run\n{\"command\":\"ls\"}<｜tool▁call▁end｜><｜tool▁calls▁end｜>"
+        val parsed = ToolParser.parseToolCalls(raw, setOf("read_file", "run"))!!
+        assertEquals("", parsed.remainingText)
+        assertEquals(listOf("read_file", "run"), parsed.toolCalls.map { it.name })
+        assertEquals("ls", JSONObject(parsed.toolCalls[1].arguments).getString("command"))
+    }
     @Test fun parsesLegacyProtocol() {
         val raw = "<|tool_calls_begin|>[{\"name\":\"read\",\"arguments\":{\"path\":\"a\"}}]<|tool_calls_end|>"
         assertEquals("read", ToolParser.parseToolCalls(raw, setOf("read"))!!.toolCalls.single().name)
