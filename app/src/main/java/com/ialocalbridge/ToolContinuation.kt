@@ -6,27 +6,55 @@ import com.ialocalbridge.utils.ToolTagScanner
 
 /** Conservative continuation of incomplete tool output. Never repair invalid JSON silently. */
 object ToolContinuation {
-    private val openTool = Regex("<tool(?:_call)?>", RegexOption.IGNORE_CASE)
-    private val closeTool = Regex("</tool(?:_call)?>", RegexOption.IGNORE_CASE)
     private val toolFence = Regex("(?m)^[ \\t]*(`{3,}|~{3,})[ \\t]*(?:tool|tool_call)[ \\t]*\\r?\\n", RegexOption.IGNORE_CASE)
-    private val dsmlParameterOpen = Regex("<\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*parameter\\b[^>]*>", RegexOption.IGNORE_CASE)
-    private val dsmlParameterClose = Regex("<\\s*/\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*parameter\\s*>", RegexOption.IGNORE_CASE)
+    private val structurePairs = listOf(
+        "<function=[^>]+>" to "</function\\s*>",
+        "<parameter=[^>]+>" to "</parameter\\s*>",
+        "<invoke\\s+name=[^>]+>" to "</invoke\\s*>",
+        "<parameter\\s+name=[^>]+>" to "</parameter\\s*>",
+        "<\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*(?:tool_calls|function_calls|calls)\\s*>" to "<\\s*/\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*(?:tool_calls|function_calls|calls)\\s*>",
+        "<\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*invoke\\b[^>]*>" to "<\\s*/\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*invoke\\s*>",
+        "<\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*parameter\\b[^>]*>" to "<\\s*/\\s*[|｜]{1,2}\\s*DSML\\s*[|｜]{1,2}\\s*parameter\\s*>",
+        "<\\s*[|｜]tool[▁_ ]calls[▁_ ]begin[|｜]\\s*>" to "<\\s*[|｜]tool[▁_ ]calls[▁_ ]end[|｜]\\s*>",
+        "<\\s*[|｜]tool[▁_ ]call[▁_ ]begin[|｜]\\s*>" to "<\\s*[|｜]tool[▁_ ]call[▁_ ]end[|｜]\\s*>"
+    ).map { Regex(it.first, RegexOption.IGNORE_CASE) to Regex(it.second, RegexOption.IGNORE_CASE) }
 
     fun isIncomplete(text: String): Boolean {
-        val tags = ToolTagScanner.scan(text)
+        val direct = text.trim()
+        if ((direct.startsWith("{") || direct.startsWith("[")) && validJson(direct)) return false
+        val masked = StringBuilder(text)
+        fun mask(start: Int, end: Int) { for (i in start until end) masked.setCharAt(i, ' ') }
+        for (fence in toolFence.findAll(text)) {
+            val bodyStart = fence.range.last + 1
+            val body = text.substring(bodyStart)
+            val delimiter = fence.groupValues[1]
+            val end = Regex("(?m)^[ \\t]*" + Regex.escape(delimiter) + "[ \\t]*(?:\\r?$)").find(body)
+            val inner = (if (end == null) body else body.substring(0, end.range.first)).trim()
+            if (inner.startsWith("{") || inner.startsWith("[")) {
+                if (end == null || !validJson(inner)) return true
+                mask(fence.range.first, bodyStart + end.range.last + 1)
+            }
+        }
+        val tags = ToolTagScanner.scan(masked.toString())
         if (tags.incompleteStart != null) return true
         for (tag in tags.tags) {
             val inner = tag.body.trim()
-            if ((inner.startsWith("{") || inner.startsWith("[")) && !validJson(inner)) return true
+            if (inner.startsWith("{") || inner.startsWith("[")) {
+                if (!validJson(inner)) return true
+                mask(tag.start, tag.end)
+            }
         }
-        val dsml = dsmlParameterOpen.findAll(text).lastOrNull()
-        if (dsml != null && dsmlParameterClose.find(text, dsml.range.last + 1) == null) return true
-        val fence = toolFence.findAll(text).lastOrNull() ?: return false
-        val body = text.substring(fence.range.last + 1)
-        val delimiter = fence.groupValues[1]
-        val end = Regex("(?m)^[ \\t]*" + Regex.escape(delimiter) + "[ \\t]*(?:\\r?$)").find(body)
-        val inner = (if (end == null) body else body.substring(0, end.range.first)).trim()
-        if (inner.startsWith("{") || inner.startsWith("[")) return !validJson(inner)
+        val structuralText = masked.toString()
+        for ((open, close) in structurePairs) {
+            var cursor = 0
+            while (true) {
+                val first = open.find(structuralText, cursor) ?: break
+                val end = close.find(structuralText, first.range.last + 1) ?: return true
+                val nested = open.find(structuralText, first.range.last + 1)
+                if (nested != null && nested.range.first < end.range.first) return true
+                cursor = end.range.last + 1
+            }
+        }
         return false
     }
     private fun validJson(s: String): Boolean = try {

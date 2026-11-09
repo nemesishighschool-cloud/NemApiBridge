@@ -83,5 +83,5 @@
     "poll_interval_ms": 750,
     "stable_polls": 3
   },
-  "max_history_chars": 8000
+  "max_history_chars": 100000
 }

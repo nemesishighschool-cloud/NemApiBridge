@@ -25,6 +25,13 @@ object ResponsesCodec {
     }
 
     fun toChat(body: JSONObject): JSONObject {
+        if (body.optBoolean("store", false))
+            throw AutomationException("unsupported_parameter", "Le stockage et la récupération des Responses ne sont pas pris en charge.")
+        if (body.has("parallel_tool_calls") && !body.optBoolean("parallel_tool_calls", true))
+            throw AutomationException("unsupported_parameter", "parallel_tool_calls=false n’est pas encore pris en charge.")
+        val format = body.optJSONObject("text")?.optJSONObject("format")
+        if (format != null && format.optString("type", "text") != "text")
+            throw AutomationException("unsupported_parameter", "Les formats de réponse JSON structurés ne sont pas garantis.")
         if (body.has("previous_response_id") && !body.isNull("previous_response_id"))
             throw AutomationException("unsupported_parameter", "previous_response_id n’est pas encore pris en charge ; renvoie l’historique dans input.")
         val messages = JSONArray()
@@ -83,6 +90,8 @@ object ResponsesCodec {
             for (i in 0 until tools.length()) {
                 val tool = tools.optJSONObject(i) ?: throw AutomationException("invalid_request", "Définition d’outil invalide.")
                 if (tool.optString("type", "function") != "function") throw AutomationException("unsupported_tool", "Seuls les outils function sont pris en charge.")
+                if (tool.optBoolean("strict", false) || tool.optJSONObject("function")?.optBoolean("strict", false) == true)
+                    throw AutomationException("unsupported_parameter", "Les outils strict=true ne sont pas garantis sur le provider web.")
                 if (tool.optJSONObject("function") != null) mapped.put(tool)
                 else {
                     val fn = JSONObject().put("name", tool.optString("name"))

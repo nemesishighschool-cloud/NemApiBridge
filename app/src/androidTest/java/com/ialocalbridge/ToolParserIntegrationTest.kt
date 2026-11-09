@@ -74,4 +74,20 @@ class ToolParserIntegrationTest {
         assertNull(ToolParser.parseToolCalls("<tool>$call unexpected</tool>", setOf("write_file")))
         assertTrue(ToolContinuation.isIncomplete("<tool>$call unexpected</tool>"))
     }
+    @Test fun xmlRejectsTrailingTextAndDuplicateParameters() {
+        assertNull(ToolParser.parseToolCalls("<function=write><parameter=content>ok</parameter>tail</function>", setOf("write")))
+        assertNull(ToolParser.parseToolCalls("<function=write><parameter=content>a</parameter><parameter=content>b</parameter></function>", setOf("write")))
+        assertNull(ToolParser.parseToolCalls("<tool><function=write><parameter=content>ok</parameter></function>tail</tool>", setOf("write")))
+        assertNull(ToolParser.parseToolCalls("<｜DSML｜tool_calls><｜DSML｜invoke name=\"write\"><｜DSML｜parameter name=\"content\">x</｜DSML｜parameter>unparsed</｜DSML｜invoke></｜DSML｜tool_calls>", setOf("write")))
+    }
+    @Test fun invalidOrUnknownCallsDoNotProduceAValidSubset() {
+        val valid = "<tool>{\"name\":\"read\",\"arguments\":{\"path\":\"a\"}}</tool>"
+        val bad = "<tool>{\"name\":\"read\",\"arguments\":[]}</tool>"
+        val unknown = "<tool>{\"name\":\"delete\",\"arguments\":{}}</tool>"
+        assertNull(ToolParser.parseToolCalls("```tool\n$valid\n$bad\n```", setOf("read")))
+        assertNull(ToolParser.parseToolCalls("$valid\n$unknown", setOf("read")))
+        assertNull(ToolParser.parseToolCalls("```tool\n$valid\nunrelated text\n```", setOf("read")))
+        val qwen = "```tool\n<function=write><parameter=content>ok</parameter></function>\n```"
+        assertEquals("ok", JSONObject(ToolParser.parseToolCalls(qwen, setOf("write"))!!.toolCalls.single().arguments).getString("content"))
+    }
 }
