@@ -3,6 +3,7 @@ package com.ialocalbridge
 import android.content.Context
 import android.view.accessibility.AccessibilityNodeInfo
 import com.ialocalbridge.models.ProviderConfig
+import com.ialocalbridge.models.UiSelector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
@@ -16,13 +17,14 @@ class AutomationCoordinator(context: Context) {
     private val appContext = context.applicationContext
     private val providerRepository = ProviderRepository(appContext)
 
-    suspend fun processQuestion(config: ProviderConfig, prompt: String): String = withContext(Dispatchers.IO) {
+    suspend fun processQuestion(config: ProviderConfig, prompt: String, images: List<ImagePayload.Payload> = emptyList()): String = withContext(Dispatchers.IO) {
         if (accepted.incrementAndGet() > MAX_ACCEPTED_REQUESTS) {
             accepted.decrementAndGet()
             throw AutomationException("queue_full", "Une autre requête utilise déjà l’application cible.")
         }
 
         var acquired = false
+        val staged = mutableListOf<BridgeImageProvider.Image>()
         try {
             acquired = withTimeoutOrNull(QUEUE_WAIT_MS) {
                 semaphore.acquire()
@@ -33,8 +35,9 @@ class AutomationCoordinator(context: Context) {
             }
             running.set(true)
             cancelled.set(false)
-            execute(config, prompt)
+            execute(config, prompt, images, staged)
         } finally {
+            staged.forEach { try { BridgeImageProvider.remove(appContext, it) } catch (e: Exception) { android.util.Log.w("AutomationCoordinator", "Temporary image cleanup failed", e) } }
             if (acquired) {
                 running.set(false)
                 cancelled.set(false)
@@ -62,7 +65,7 @@ class AutomationCoordinator(context: Context) {
         }
     }
 
-    private suspend fun execute(config: ProviderConfig, prompt: String): String {
+    private suspend fun execute(config: ProviderConfig, prompt: String, images: List<ImagePayload.Payload>, staged: MutableList<BridgeImageProvider.Image>): String {
         if (prompt.isBlank()) throw AutomationException("invalid_request", "Le message utilisateur est vide.")
         if (prompt.length > MAX_PROMPT_CHARS) {
             throw AutomationException("request_too_large", "Le message dépasse la limite autorisée.")
@@ -80,6 +83,10 @@ class AutomationCoordinator(context: Context) {
             if (service.hasAnyMatch(config.packageName, config.selectors.generating))
                 throw AutomationException("user_intervention_required", "Une génération est déjà en cours dans l’application cible.")
         }
+        if (config.selectors.imageDelete.isNotEmpty()) withContext(Dispatchers.Main.immediate) {
+            if (service.hasAnyMatch(config.packageName, config.selectors.imageDelete))
+                throw AutomationException("user_intervention_required", "Une pièce jointe est déjà présente dans le champ ; retire-la avant la requête.")
+        }
         // A short conversation can have no scroll container at all. If so,
         // verify new prompt/answer ordering before accepting any reply and
         // reject an existing answer unless it is wholly inside the viewport.
@@ -95,6 +102,14 @@ class AutomationCoordinator(context: Context) {
             service.responseBaseline(config.packageName, config.selectors.assistantMessage, prompt)
         } else null
         try {
+            for (payload in images) {
+                val image = BridgeImageProvider.stage(appContext, payload.bytes, payload.mime)
+                staged.add(image)
+                attachImage(service, config, image)
+                // Keep the descriptor available to DeepSeek until the response is done,
+                // but show only the next file in the system picker.
+                BridgeImageProvider.hide(appContext, image)
+            }
             val input = awaitInput(service, config)
             withContext(Dispatchers.Main.immediate) {
                 try { service.setText(input, prompt) } finally { input.recycle() }
@@ -284,6 +299,72 @@ class AutomationCoordinator(context: Context) {
             delay(250)
         }
         throw AutomationException("action_failed", "Limite de défilement atteinte avant la fin de la conversation.")
+    }
+
+    /** Open only Android's system DocumentsUI and select our exact staged filename.
+     * No stored coordinates and no automatic BACK if an unexpected screen appears. */
+    private suspend fun attachImage(service: ClickAccessibilityService, config: ProviderConfig, image: BridgeImageProvider.Image) {
+        suspend fun clickTarget(selectors: List<UiSelector>, label: String) {
+            val node = awaitNode(service, config, selectors, label)
+            withContext(Dispatchers.Main.immediate) { try { service.click(node, label) } finally { node.recycle() } }
+        }
+        val menuOpen = withContext(Dispatchers.Main.immediate) { service.hasAnyMatch(config.packageName, config.selectors.imageDocument) }
+        if (!menuOpen) clickTarget(config.selectors.imageAttach, "image_attach")
+        clickTarget(config.selectors.imageDocument, "image_document")
+        var picker: String? = null
+        repeat(80) {
+            if (picker == null) {
+                val current = withContext(Dispatchers.Main.immediate) { service.currentPackageName() }
+                if (current == "com.android.documentsui" || current == "com.google.android.documentsui") {
+                    val flags = try { appContext.packageManager.getApplicationInfo(current, 0).flags } catch (_: Exception) { 0 }
+                    if (flags and (android.content.pm.ApplicationInfo.FLAG_SYSTEM or android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0)
+                        throw AutomationException("user_intervention_required", "Le sélecteur de fichiers n’est pas une application système reconnue.")
+                    picker = current
+                } else delay(100)
+            }
+        }
+        val pkg = picker ?: throw AutomationException("user_intervention_required", "Sélecteur Android non reconnu ; ferme-le manuellement.")
+        val fileSelector = listOf(UiSelector(by="text", value=image.file.name), UiSelector(by="content_description", value=image.file.name))
+        val rootSelector = listOf(UiSelector(by="text", value="NemApiBridge — temporary images"), UiSelector(by="content_description", value="NemApiBridge — temporary images"))
+        val rootsButton = listOf(UiSelector(by="content_description", value="Show roots"))
+        suspend fun find(selectors: List<UiSelector>, label: String): AccessibilityNodeInfo? = withContext(Dispatchers.Main.immediate) {
+            if (service.currentPackageName() != pkg) return@withContext null
+            try { service.findUniqueNode(pkg, selectors, label) } catch (e: AutomationException) { if (e.errorCode == "selector_missing") null else throw e }
+        }
+        suspend fun click(node: AccessibilityNodeInfo, label: String) = withContext(Dispatchers.Main.immediate) { try { service.click(node, label) } finally { node.recycle() } }
+        var chosen = false
+        var rootsOpened = false
+        var rootClicked = false
+        repeat(120) {
+            if (!chosen) {
+                val file = find(fileSelector, "image_file")
+                if (file != null) { click(file, "image_file"); chosen = true }
+                else if (!rootClicked) {
+                    val breadcrumb = find(listOf(UiSelector(by="resource_id", value="$pkg:id/breadcrumb_text")), "picker_breadcrumb")
+                    val alreadyInRoot = try { breadcrumb?.text?.toString() == "NemApiBridge — temporary images" } finally { breadcrumb?.recycle() }
+                    if (alreadyInRoot) rootClicked = true
+                    val root = if (alreadyInRoot) null else find(rootSelector, "image_root")
+                    if (root != null) { click(root, "image_root"); rootClicked = true }
+                    else if (!alreadyInRoot && !rootsOpened) {
+                        val button = find(rootsButton, "picker_roots")
+                        if (button != null) { click(button, "picker_roots"); rootsOpened = true }
+                    }
+                }
+                if (!chosen) delay(100)
+            }
+        }
+        if (!chosen) throw AutomationException("user_intervention_required", "Image introuvable dans le sélecteur Android ; ferme-le manuellement.")
+        val thumbnail = listOf(UiSelector(by="content_description", value=image.file.name))
+        var attached = false
+        repeat(120) {
+            if (!attached) {
+                attached = withContext(Dispatchers.Main.immediate) {
+                    service.currentPackageName() == config.packageName && service.hasAnyMatch(config.packageName, thumbnail)
+                }
+                if (!attached) delay(100)
+            }
+        }
+        if (!attached) throw AutomationException("user_intervention_required", "L’application n’a pas confirmé la pièce jointe ; vérifie le champ avant de continuer.")
     }
 
     private suspend fun awaitInput(service: ClickAccessibilityService, config: ProviderConfig): AccessibilityNodeInfo {

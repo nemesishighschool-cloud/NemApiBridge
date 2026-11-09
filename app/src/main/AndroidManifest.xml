@@ -40,6 +40,15 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <provider
+            android:name=".BridgeImageProvider"
+            android:authorities="${applicationId}.images"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>
+        </provider>
+
         <service
             android:name=".FloatingWindowService"
             android:enabled="true"

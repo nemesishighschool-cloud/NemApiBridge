@@ -52,8 +52,27 @@ object ResponsesCodec {
                     .put("tool_call_id", item.optString("call_id")).put("content", text(item.opt("output"))))
                 "message" -> {
                     val role = item.optString("role", "user").let { if (it == "developer") "system" else it }
-                    val content = text(item.opt("content"))
-                    if (content.isNotBlank()) messages.put(JSONObject().put("role", role).put("content", content))
+                    val value = item.opt("content")
+                    if (value is JSONArray && (0 until value.length()).any { value.optJSONObject(it)?.optString("type") == "input_image" }) {
+                        val parts = JSONArray()
+                        for (j in 0 until value.length()) {
+                            val part = value.optJSONObject(j) ?: throw AutomationException("unsupported_content", "Contenu Responses invalide.")
+                            when (part.optString("type")) {
+                                "input_text", "output_text", "text" -> parts.put(JSONObject().put("type", "text").put("text", part.optString("text")))
+                                "input_image" -> {
+                                    if (part.has("file_id") && !part.isNull("file_id")) throw AutomationException("unsupported_content", "Les images Responses par file_id ne sont pas prises en charge.")
+                                    val detail = part.optString("detail", "auto")
+                                    if (detail != "auto") throw AutomationException("unsupported_parameter", "Le réglage detail des images n’est pas pris en charge.")
+                                    parts.put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", part.optString("image_url"))))
+                                }
+                                else -> throw AutomationException("unsupported_content", "Ce type de contenu Responses n’est pas pris en charge.")
+                            }
+                        }
+                        messages.put(JSONObject().put("role", role).put("content", parts))
+                    } else {
+                        val content = text(value)
+                        if (content.isNotBlank()) messages.put(JSONObject().put("role", role).put("content", content))
+                    }
                 }
                 else -> throw AutomationException("unsupported_content", "Type input Responses non pris en charge : ${item.optString("type")}")
             }

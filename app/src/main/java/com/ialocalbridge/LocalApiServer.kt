@@ -143,10 +143,10 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                 "queue_full", "queue_timeout" -> Response.Status.SERVICE_UNAVAILABLE
                 "accessibility_disabled", "wrong_app", "selector_missing", "selector_ambiguous",
                 "action_failed", "response_timeout", "response_incomplete", "user_intervention_required", "cancelled", "tool_call_required" -> Response.Status.CONFLICT
-                "response_too_large" -> Response.Status.PAYLOAD_TOO_LARGE
+                "response_too_large", "request_too_large" -> Response.Status.PAYLOAD_TOO_LARGE
                 else -> Response.Status.BAD_REQUEST
             }
-            jsonError(status, e.errorCode, e.message)
+            jsonError(status, e.errorCode, e.message).also { if (e.errorCode == "request_too_large") it.closeConnection(true) }
         } catch (e: Exception) {
             Log.e(TAG, "Request failed: ${e.javaClass.simpleName}")
             jsonError(Response.Status.INTERNAL_ERROR, "internal_error", "La requête n’a pas pu être traitée.")
@@ -186,7 +186,8 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         val config = providerRepository.getActiveName()?.let(providerRepository::get)
         val providers = JSONArray()
         if (config != null) providers.put(JSONObject().put("id", config.provider.lowercase())
-            .put("models", JSONArray().put(config.provider)).put("name", config.provider))
+            .put("models", JSONArray().put(config.provider)).put("name", config.provider)
+            .put("supports_images", config.selectors.imageAttach.isNotEmpty() && config.selectors.imageDocument.isNotEmpty() && config.selectors.imageDelete.isNotEmpty()))
         return nemJson(JSONObject().put("providers", providers))
     }
 
@@ -245,18 +246,24 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
     private fun handleChatCompletions(session: IHTTPSession, responseMode: Boolean = false): Response {
         val incoming = parseJsonBody(session)
         val request = if (responseMode) ResponsesCodec.toChat(incoming) else incoming
-        val messages = request.optJSONArray("messages")
+        val rawMessages = request.optJSONArray("messages")
             ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_request", "Le champ messages est requis.")
-        if (messages.length() == 0) {
+        if (rawMessages.length() == 0) {
             return jsonError(Response.Status.BAD_REQUEST, "invalid_request", "Le champ messages ne peut pas être vide.")
         }
 
+        val imagePayload = ImagePayload.parse(rawMessages)
+        val messages = imagePayload.messages
         val modelName = request.optString("model").ifBlank { providerRepository.getActiveName().orEmpty() }
         val config = providerRepository.get(modelName) ?: providerRepository.getActiveName()?.let(providerRepository::get)
             ?.takeIf { modelName.equals(it.provider + "-chat", ignoreCase = true) }
             ?: return jsonError(Response.Status.BAD_REQUEST, "model_not_found", "Le modèle '$modelName' n’est pas configuré.")
 
-        val messagesPrompt = buildPrompt(messages, config.maxHistoryChars)
+        if (imagePayload.images.isNotEmpty() && (config.selectors.imageAttach.isEmpty() || config.selectors.imageDocument.isEmpty() || config.selectors.imageDelete.isEmpty()))
+            throw AutomationException("unsupported_content", "Ce provider n’a pas de sélecteurs d’image configurés.")
+        val historyPrompt = buildPrompt(messages, config.maxHistoryChars, rejectHistoryTruncation = imagePayload.images.isNotEmpty())
+        val messagesPrompt = historyPrompt + if (imagePayload.images.isNotEmpty())
+            "\n\nThe attached images are numbered in the same order as the [Image N attached] markers in the history. Earlier images are reattached as context." else ""
         val toolsValue = request.opt("tools")
         val tools = when (toolsValue) {
             null, JSONObject.NULL -> null
@@ -285,12 +292,13 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         }
         fun complete(): CompletionData = agentIntegrations.serialized {
           try {
-            val plan = agentIntegrations.plan(agent, config.provider, messages, tools, screenMarker(), prompt) { tail ->
+            val sessionAgent = if (imagePayload.images.isEmpty()) agent else null
+            val plan = agentIntegrations.plan(sessionAgent, config.provider, messages, tools, screenMarker(), prompt) { tail ->
                 val text = buildPrompt(tail, config.maxHistoryChars, requireUser = false)
                 if (tools != null && tools.length() > 0) text + "\n\nReminder: to call a tool, use a fenced tool block with <tool>{JSON}</tool>." else text
             }
             val sentPrompt = plan.prompt
-            val result = runBlocking(Dispatchers.IO) { coordinator.processQuestion(config, sentPrompt) }
+            val result = runBlocking(Dispatchers.IO) { coordinator.processQuestion(config, sentPrompt, imagePayload.images) }
             totalRequests.incrementAndGet()
             val promptTokens = estimateTokens(sentPrompt)
             val completionTokens = estimateTokens(result)
@@ -322,14 +330,14 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                 assistant.put("tool_calls", calls)
             }
             var finalMarker: String? = null
-            if (agent?.incremental == true) {
+            if (sessionAgent?.incremental == true) {
                 for (attempt in 0 until 15) {
                     finalMarker = screenMarker()
                     if (finalMarker != null) break
                     Thread.sleep(200)
                 }
             }
-            agentIntegrations.completed(agent, config.provider, messages, tools, assistant, finalMarker)
+            agentIntegrations.completed(sessionAgent, config.provider, messages, tools, assistant, finalMarker)
             CompletionData(result, parsed, promptTokens, completionTokens)
           } catch (e: Throwable) {
             agentIntegrations.invalidate()
@@ -398,7 +406,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         return false
     }
 
-    private fun buildPrompt(messages: JSONArray, maxHistoryChars: Int, requireUser: Boolean = true): String {
+    private fun buildPrompt(messages: JSONArray, maxHistoryChars: Int, requireUser: Boolean = true, rejectHistoryTruncation: Boolean = false): String {
         val normalized = mutableListOf<Pair<String, String>>()
         val callNames = mutableMapOf<String, String>()
         for (index in 0 until messages.length()) {
@@ -450,7 +458,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
                 throw AutomationException("request_too_large", "Un message courant dépasse la limite d’historique du provider.")
             }
             if (retainedChars + entry.length > maxHistoryChars) {
-                if (index >= latestUserIndex) {
+                if (index >= latestUserIndex || rejectHistoryTruncation) {
                     throw AutomationException(
                         "request_too_large",
                         "L’historique courant ne tient pas dans la limite sans couper le dernier message utilisateur."
@@ -848,6 +856,8 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
     }
 
     private fun parseJsonBody(session: IHTTPSession): JSONObject {
+        val length = session.headers["content-length"]?.toLongOrNull()
+        if (length != null && length > MAX_REQUEST_CHARS) throw AutomationException("request_too_large", "Le corps JSON dépasse 6 Mo.")
         val files = HashMap<String, String>()
         val body = try {
             session.parseBody(files)
@@ -855,9 +865,8 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         } catch (e: Exception) {
             throw AutomationException("invalid_request", "Impossible de lire le corps JSON de la requête.")
         }
-        if (body.isBlank() || body.length > MAX_REQUEST_CHARS) {
-            throw AutomationException("invalid_request", "Le corps JSON est vide ou dépasse 512 Ko.")
-        }
+        if (body.length > MAX_REQUEST_CHARS) throw AutomationException("request_too_large", "Le corps JSON dépasse 6 Mo.")
+        if (body.isBlank()) throw AutomationException("invalid_request", "Le corps JSON est vide.")
         return try {
             JSONObject(body)
         } catch (e: Exception) {
@@ -934,7 +943,7 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         private const val SETTINGS_PREFERENCES = "server_settings"
         private const val STREAM_ENABLED_KEY = "stream_enabled"
         private const val API_KEY_REQUIRED_KEY = "api_key_required"
-        private const val MAX_REQUEST_CHARS = 512 * 1024
+        private const val MAX_REQUEST_CHARS = 6 * 1024 * 1024
         private const val MAX_UPLOAD_BYTES = 20L * 1024 * 1024
         private const val MAX_FILENAME_LENGTH = 180
         private const val STREAM_BUFFER_SIZE = 8 * 1024

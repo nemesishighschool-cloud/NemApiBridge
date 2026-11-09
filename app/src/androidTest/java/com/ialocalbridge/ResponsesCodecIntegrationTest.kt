@@ -30,10 +30,10 @@ class ResponsesCodecIntegrationTest {
         assertEquals("c1", result.getJSONArray("output").getJSONObject(1).getString("call_id"))
         assertEquals(5, result.getJSONObject("usage").getInt("total_tokens"))
     }
-    @Test fun rejectsUnsupportedStateAndImagesInsteadOfLosingData() {
+    @Test fun rejectsUnsupportedStateAndImageFileIdsInsteadOfLosingData() {
         try { ResponsesCodec.toChat(JSONObject("""{"input":"hi","previous_response_id":"resp_old"}""")); fail("previous_response_id silently ignored") }
         catch (e: AutomationException) { assertEquals("unsupported_parameter", e.errorCode) }
-        try { ResponsesCodec.toChat(JSONObject("""{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,a"}]}]}""")); fail("image silently ignored") }
+        try { ResponsesCodec.toChat(JSONObject("""{"input":[{"role":"user","content":[{"type":"input_image","file_id":"file_1"}]}]}""")); fail("file_id silently ignored") }
         catch (e: AutomationException) { assertEquals("unsupported_content", e.errorCode) }
     }
 }

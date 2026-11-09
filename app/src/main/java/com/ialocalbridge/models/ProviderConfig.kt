@@ -27,6 +27,9 @@ data class ProviderSelectors(
     val allowReconstructionGesture: Boolean = false,
     @SerializedName("detect_identical_responses")
     val detectIdenticalResponses: Boolean = false,
+    @SerializedName("image_attach") val imageAttach: List<UiSelector> = emptyList(),
+    @SerializedName("image_document") val imageDocument: List<UiSelector> = emptyList(),
+    @SerializedName("image_delete") val imageDelete: List<UiSelector> = emptyList(),
     val send: List<UiSelector> = emptyList(),
     @SerializedName("assistant_message")
     val assistantMessage: List<UiSelector> = emptyList(),
@@ -137,7 +140,11 @@ object ProviderConfigParser {
         require(safeAssistantMessages.none { it.reconstructClipped && (!it.rejectClipped || !it.textOnly || scrollToEnd.isEmpty()) }) {
             "reconstruct_clipped nécessite reject_clipped, text_only et scroll_to_end."
         }
-        val allSelectors = input + activation + send + assistantMessages + copyResponse + generating + stop + scrollToEnd
+        val imageAttach = requireNotNull(selectors.imageAttach) { "selectors.image_attach invalide." }
+        val imageDocument = requireNotNull(selectors.imageDocument) { "selectors.image_document invalide." }
+        val imageDelete = requireNotNull(selectors.imageDelete) { "selectors.image_delete invalide." }
+        require(listOf(imageAttach, imageDocument, imageDelete).all { it.isEmpty() } || listOf(imageAttach, imageDocument, imageDelete).all { it.isNotEmpty() }) { "Les trois sélecteurs d’image doivent être définis ensemble." }
+        val allSelectors = input + activation + send + assistantMessages + copyResponse + generating + stop + scrollToEnd + imageAttach + imageDocument + imageDelete
         allSelectors.forEach { selector ->
             val nonNullSelector = requireNotNull(selector) { "Un sélecteur est null." }
             val by = requireNotNull(nonNullSelector.by) { "Le champ by d’un sélecteur est requis." }

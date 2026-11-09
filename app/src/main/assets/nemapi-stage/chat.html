@@ -31,8 +31,8 @@
         <div class="chat-body" id="chat-body"></div>
         <div class="attach-row" id="chat-attach-row"></div>
         <div class="chat-input">
-          <input type="file" id="chat-file" accept="image/*" multiple hidden>
-          <button class="btn attach-btn" id="chat-attach" type="button" disabled title="Images non encore prises en charge par Android" aria-label="Joindre une image"></button>
+          <input type="file" id="chat-file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+          <button class="btn attach-btn" id="chat-attach" type="button" disabled title="Les images nécessitent un provider compatible" aria-label="Joindre une image"></button>
           <textarea id="chat-input" class="input" rows="1" placeholder="Message… (Entrée pour envoyer, Maj+Entrée pour une nouvelle ligne, Ctrl+V pour coller une capture)"></textarea>
           <button class="btn btn-primary" id="chat-send" type="button">Envoyer</button>
         </div>
@@ -47,6 +47,12 @@
 let chatHistory = [];
 let busy = false;
 let modelProvider = {};
+let modelImages = {};
+function updateImageControl() {
+  const ok = !!modelImages[$("chat-model").value];
+  $("chat-attach").disabled = !ok;
+  $("chat-attach").title = ok ? "Images PNG, JPEG ou WebP : 8 maximum et 4 Mo au total dans l’historique" : "Le provider actif ne prend pas en charge les images";
+}
 const EMPTY = `<div class="empty-chat">${icon("chat", "")}<div>Choisis un modèle et envoie un message de test.</div></div>`;
 $("chat-body").innerHTML = EMPTY;
 $("chat-send").insertAdjacentHTML("afterbegin", icon("send", ""));
@@ -58,17 +64,19 @@ async function loadModels() {
     for (const p of providers) {
       for (const m of p.models || []) {
         modelProvider[m] = p.id;
+        modelImages[m] = !!p.supports_images;
         opts.push(`<option value="${esc(m)}">${esc(providerLabel(p.id))} · ${esc(m)}</option>`);
       }
     }
     $("chat-model").innerHTML = opts.join("");
     const saved = localStorage.getItem("nemapi-chat-model");
     if (saved && modelProvider[saved]) $("chat-model").value = saved;
+    updateImageControl();
   } catch (e) {
     toast("Liste des modèles indisponible : " + e.message, "error");
   }
 }
-$("chat-model").addEventListener("change", () => { try { localStorage.setItem("nemapi-chat-model", $("chat-model").value); } catch (_) {} });
+$("chat-model").addEventListener("change", () => { updateImageControl(); try { localStorage.setItem("nemapi-chat-model", $("chat-model").value); } catch (_) {} });
 
 function addMsg(role, text, images) {
   const body = $("chat-body");
@@ -99,7 +107,7 @@ function addMsg(role, text, images) {
 // OpenAI multimodal format: the image goes in the message as an image_url
 // part (base64 data URL). The proxy forwards it to the extension, which
 // uploads it through the provider's own file input.
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 let pendingImages = [];
 
 function humanSize(n) {
@@ -136,18 +144,23 @@ function readAsDataURL(file) {
 }
 
 async function addFiles(fileList) {
-  toast("Les images ne sont pas encore prises en charge par cette version Android.", "error"); return;
+  if (!modelImages[$("chat-model").value]) { toast("Le provider actif ne prend pas en charge les images.", "error"); return; }
+  const previousImages = chatHistory.flatMap(m => Array.isArray(m.content) ? m.content.filter(p => p.type === "image_url") : []);
+  const previousSize = previousImages.reduce((n, p) => {
+    const b = String(p.image_url?.url || "").split(",")[1] || "";
+    return n + Math.floor(b.length * 3 / 4) - (b.endsWith("==") ? 2 : b.endsWith("=") ? 1 : 0);
+  }, 0);
   for (const file of Array.from(fileList || [])) {
-    if (!/^image\//.test(file.type)) {
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
       toast(`${file.name} : seules les images sont acceptées`, "error");
       continue;
     }
-    if (file.size > MAX_IMAGE_BYTES) {
+    if (previousSize + file.size + pendingImages.reduce((n, img) => n + img.size, 0) > MAX_IMAGE_BYTES) {
       toast(`${file.name} : trop lourd (max ${humanSize(MAX_IMAGE_BYTES)})`, "error");
       continue;
     }
-    if (pendingImages.length >= 8) {
-      toast("Maximum 8 images par message", "error");
+    if (previousImages.length + pendingImages.length >= 8) {
+      toast("Huit images maximum dans l’historique", "error");
       break;
     }
     try {

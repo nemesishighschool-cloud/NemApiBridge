@@ -39,6 +39,9 @@ class MainActivity : AppCompatActivity() {
             handler.postDelayed(this, 1500)
         }
     }
+    private var serverStarting = false
+    private fun bridgeLocked(): Boolean = serverStarting || FloatingWindowService.runtimeState.running
+
     private val openProviderFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) importProvider(uri)
     }
@@ -110,6 +113,7 @@ class MainActivity : AppCompatActivity() {
             else startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         binding.btnImportProvider.setOnClickListener {
+            if (bridgeLocked()) { Toast.makeText(this, "Arrêtez le serveur avant d’importer un provider.", Toast.LENGTH_LONG).show(); return@setOnClickListener }
             openProviderFile.launch(arrayOf("application/json", "text/json", "text/plain"))
         }
         binding.btnDeleteProvider.setOnClickListener { confirmDeleteProvider() }
@@ -175,6 +179,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun importProvider(uri: Uri) {
+        if (bridgeLocked()) { Toast.makeText(this, "Arrêtez le serveur avant d’importer un provider.", Toast.LENGTH_LONG).show(); return }
         try {
             val config = ProviderConfigParser.parse(readProviderFile(uri))
             val nameInput = EditText(this).apply { setText(config.provider); hint = "Nom du provider"; setSingleLine(true) }
@@ -183,6 +188,7 @@ class MainActivity : AppCompatActivity() {
                 .setView(nameInput).setNegativeButton("Annuler", null)
                 .setPositiveButton("Enregistrer") { _, _ ->
                     try {
+                        check(!bridgeLocked()) { "Arrêtez le serveur avant de remplacer le provider." }
                         val namedConfig = config.copy(provider = nameInput.text.toString().trim())
                         ProviderConfigParser.validate(namedConfig)
                         providerRepository.replace(namedConfig)
@@ -227,6 +233,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage("Supprimer « $name » et sa configuration ?")
             .setNegativeButton("Annuler", null)
             .setPositiveButton("Supprimer") { _, _ ->
+                if (bridgeLocked()) { Toast.makeText(this, "Arrêtez le serveur avant de supprimer le provider.", Toast.LENGTH_LONG).show(); return@setPositiveButton }
                 providerRepository.delete(name)
                 refreshProviderList()
                 Toast.makeText(this, "Provider supprimé.", Toast.LENGTH_SHORT).show()
@@ -246,6 +253,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startBridge() {
+        if (bridgeLocked()) return
         if (!PermissionHelper.hasOverlayPermission(this) || ClickAccessibilityService.instance == null) {
             showPage(2)
             renderStatus()
@@ -267,17 +275,27 @@ class MainActivity : AppCompatActivity() {
         providerRepository.setActive(name)
         getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE).edit().putInt(PORT_KEY, port).putString(ACTIVE_PROVIDER_KEY, name).apply()
         val intent = Intent(this, FloatingWindowService::class.java).putExtra("port", port).putExtra("provider", name)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-        awaitServerThenOpen(0)
+        serverStarting = true
+        renderStatus()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+            awaitServerThenOpen(0)
+        } catch (e: Exception) {
+            serverStarting = false
+            renderStatus()
+            Toast.makeText(this, "Impossible de démarrer le serveur.", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun awaitServerThenOpen(attempt: Int) {
         handler.postDelayed({
             val state = FloatingWindowService.runtimeState
             if (state.running) {
+                serverStarting = false
                 renderStatus()
                 openTarget()
             } else if (state.error != null || attempt >= 20) {
+                serverStarting = false
                 renderStatus()
                 Toast.makeText(this, state.error ?: "Le serveur n’a pas démarré.", Toast.LENGTH_LONG).show()
             } else awaitServerThenOpen(attempt + 1)
@@ -353,12 +371,13 @@ class MainActivity : AppCompatActivity() {
             else "Web USB : http://127.0.0.1:$port/"
         binding.txtAdbCommand.text = if (validPort) "Sur le PC : adb forward tcp:$port tcp:$port" else "Choisissez un port valide."
         binding.btnCopyUrl.isEnabled = validPort
-        binding.edtPort.isEnabled = !state.running
-        binding.switchStreaming.isEnabled = !state.running
-        binding.spinnerProvider.isEnabled = !state.running
-        binding.btnImportProvider.isEnabled = !state.running
-        binding.btnDeleteProvider.isEnabled = !state.running && config != null
-        binding.btnStartServer.isEnabled = !state.running && config != null
+        val locked = bridgeLocked()
+        binding.edtPort.isEnabled = !locked
+        binding.switchStreaming.isEnabled = !locked
+        binding.spinnerProvider.isEnabled = !locked
+        binding.btnImportProvider.isEnabled = !locked
+        binding.btnDeleteProvider.isEnabled = !locked && config != null
+        binding.btnStartServer.isEnabled = !locked && config != null
         binding.btnStopServer.isEnabled = state.running
         binding.btnOpenTarget.isEnabled = config != null
         listOf(binding.btnStartServer, binding.btnStopServer, binding.btnOpenTarget,

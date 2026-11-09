@@ -57,6 +57,24 @@
         "by": "content_description",
         "value": "Copy"
       }
+    ],
+    "image_attach": [
+      {
+        "by": "content_description",
+        "value": "Attach files"
+      }
+    ],
+    "image_document": [
+      {
+        "by": "text",
+        "value": "Document"
+      }
+    ],
+    "image_delete": [
+      {
+        "by": "content_description",
+        "value": "Delete"
+      }
     ]
   },
   "timeouts": {

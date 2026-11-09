@@ -54,7 +54,8 @@ const assert = require('node:assert/strict');
   }
   await visit('/next/chat', 'Chat test');
   await page.waitForFunction(() => document.querySelector('#chat-model option')?.value === 'DeepSeek');
-  assert.equal(await page.locator('#chat-attach').isDisabled(), true);
+  const providers = await page.evaluate(async () => (await (await fetch('/web/nem/providers')).json()).providers);
+  assert.equal(await page.locator('#chat-attach').isDisabled(), !providers[0].supports_images);
   if (process.env.LIVE_CHAT === '1') {
     await page.locator('#chat-input').fill('Reply with exactly NEM110WEBOK and nothing else.');
     await page.locator('#chat-send').click();
