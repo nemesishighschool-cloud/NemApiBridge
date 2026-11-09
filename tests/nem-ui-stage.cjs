@@ -14,6 +14,8 @@ const assert = require('node:assert/strict');
     if (errors.length) throw Error(errors.join('\n'));
     console.log('PAGE OK', path);
   }
+  await visit('/', 'Tableau de bord');
+  await visit('/chat', 'Chat test');
   await visit('/next/', 'Tableau de bord');
   await page.waitForFunction(() => document.getElementById('st-ready')?.textContent === '1/1', null, {timeout: 10000});
   assert.match(await page.locator('#dash-providers').innerText(), /DeepSeek/);

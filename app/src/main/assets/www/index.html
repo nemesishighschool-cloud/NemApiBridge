@@ -61,12 +61,12 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const labels = {dashboard:'Tableau de bord',chat:'Chat de test',connection:'Connexion & API'};
-let currentView = location.pathname === '/chat' ? 'chat' : 'dashboard';
+let currentView = location.pathname === '/legacy/chat' ? 'chat' : 'dashboard';
 let latestStatus = null, latestConfig = null, models = [], chatBusy = false, refreshing = false;
 const histories = Object.create(null);
-function view(name, updateHistory=true){if(!labels[name])return;currentView=name;document.querySelectorAll('.view').forEach(x=>x.hidden=x.id!=='view-'+name);document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===name));$('topTitle').textContent=labels[name];if(updateHistory)history.replaceState(null,'',name==='chat'?'/chat':name==='dashboard'?'/admin':'/');}
+function view(name, updateHistory=true){if(!labels[name])return;currentView=name;document.querySelectorAll('.view').forEach(x=>x.hidden=x.id!=='view-'+name);document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===name));$('topTitle').textContent=labels[name];if(updateHistory)history.replaceState(null,'',name==='chat'?'/legacy/chat':'/legacy');}
 document.querySelectorAll('[data-view],[data-go]').forEach(x=>x.addEventListener('click',()=>view(x.dataset.view||x.dataset.go)));
-window.addEventListener('popstate',()=>view(location.pathname==='/chat'?'chat':'dashboard',false));
+window.addEventListener('popstate',()=>view(location.pathname==='/legacy/chat'?'chat':'dashboard',false));
 view(currentView,false);
 async function api(path,options={}){let response;try{response=await fetch(path,options)}catch(e){throw new Error('Connexion au téléphone impossible. Vérifiez le serveur et le réseau.')}const type=response.headers.get('content-type')||'';const body=type.includes('json')?await response.json():await response.text();if(!response.ok)throw new Error((body&&body.error&&body.error.message)||`Erreur HTTP ${response.status}`);return body}
 function post(path,data){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}

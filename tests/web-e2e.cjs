@@ -9,7 +9,7 @@ const model = process.env.NEM_PROVIDER || 'DeepSeek';
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    assert.strictEqual((await page.goto(base, { waitUntil: 'networkidle' })).status(), 200);
+    assert.strictEqual((await page.goto(base + '/legacy', { waitUntil: 'networkidle' })).status(), 200);
     await page.waitForFunction(() => document.querySelector('#statServer').textContent === 'En ligne');
     const network = await page.evaluate(async () => (await fetch('/web/network')).json());
     await page.locator('button[data-go="connection"]').first().click();
@@ -25,7 +25,7 @@ const model = process.env.NEM_PROVIDER || 'DeepSeek';
       console.log('Échange réel : NEMWEBTESTOK');
     }
     const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
-    await mobile.goto(base + '/chat', { waitUntil: 'networkidle' });
+    await mobile.goto(base + '/legacy/chat', { waitUntil: 'networkidle' });
     assert(await mobile.locator('#view-chat').isVisible());
     assert(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.deepStrictEqual(errors, []);

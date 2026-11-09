@@ -50,7 +50,8 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         }
 
         val uri = session.uri
-        val sensitiveWeb = uri.startsWith("/web/nem/") || uri == "/next" || uri.startsWith("/next/")
+        val sensitiveWeb = uri.startsWith("/web/nem/") || uri == "/next" || uri.startsWith("/next/") ||
+            uri in setOf("/", "/index.html", "/admin", "/chat", "/legacy", "/legacy/chat")
         if (sensitiveWeb && !isSameOriginOrDirect(session)) {
             return jsonError(Response.Status.FORBIDDEN, "forbidden_origin", "L’administration web refuse les requêtes provenant d’un autre site.")
         }
@@ -58,13 +59,17 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
             return if (sensitiveWeb) newFixedLengthResponse(Response.Status.FORBIDDEN, MIME_PLAINTEXT, "")
             else newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "").also(::addCORSHeaders)
         }
-        // Development preview only. The existing production interface stays unchanged.
         if (session.method == Method.GET && (uri == "/next" || uri.startsWith("/next/"))) {
             return stagedWebAsset(uri).also { it.addHeader("Cache-Control", "no-store") }
         }
-        if (session.method == Method.GET && uri in setOf("/", "/index.html", "/chat", "/admin")) {
+        if (session.method == Method.GET && uri in setOf("/", "/index.html", "/admin", "/chat")) {
+            val path = if (uri == "/chat") "/next/chat" else "/next/"
+            return stagedWebAsset(path).also { it.addHeader("Cache-Control", "no-store") }
+        }
+        // Keep the original Android bridge interface accessible for existing users.
+        if (session.method == Method.GET && uri in setOf("/legacy", "/legacy/chat")) {
             return newFixedLengthResponse(Response.Status.OK, MIME_HTML, WebInterface.getHtml(appContext))
-                .also(::addCORSHeaders)
+                .also { it.addHeader("Cache-Control", "no-store") }
         }
         if (session.method == Method.GET && uri == "/web/logo.png") {
             return newChunkedResponse(Response.Status.OK, "image/png", appContext.assets.open("www/logo.png"))
