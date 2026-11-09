@@ -398,10 +398,24 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
         }
 
         for (i in 0 until tools.length()) {
-            val tool = tools.optJSONObject(i) ?: continue
-            if (tool.optBoolean("strict", false) || tool.optJSONObject("function")?.optBoolean("strict", false) == true)
+            val tool = tools.optJSONObject(i) ?: throw AutomationException("invalid_request", "Définition d’outil invalide.")
+            if (tool.has("type") && tool.opt("type") !is String)
+                throw AutomationException("invalid_request", "Le type de l’outil doit être une chaîne.")
+            if (tool.has("type") && tool.optString("type") != "function")
+                throw AutomationException("unsupported_tool", "Seuls les outils function sont pris en charge.")
+            if (tool.has("function") && tool.opt("function") !is JSONObject)
+                throw AutomationException("invalid_request", "La définition function doit être un objet.")
+            val fn = tool.optJSONObject("function") ?: tool
+            if (fn.opt("name") !is String || fn.optString("name").isBlank())
+                throw AutomationException("invalid_request", "Le nom de fonction est requis.")
+            if (fn.has("parameters") && !fn.isNull("parameters") && fn.opt("parameters") !is JSONObject)
+                throw AutomationException("invalid_request", "Le champ parameters doit être un objet JSON.")
+            if (tool.optBoolean("strict", false) || fn.optBoolean("strict", false))
                 throw AutomationException("unsupported_parameter", "Les outils strict=true ne sont pas garantis sur le provider web.")
         }
+        // Validate duplicate names and definitions even when tool_choice is none.
+        val base = try { ToolParser.buildToolCallPrompt(tools) }
+        catch (_: Exception) { throw AutomationException("invalid_request", "La définition tools est invalide.") }
         var toolCallRequired = false
         val selectedFunction = when (choice) {
             null, JSONObject.NULL, "auto" -> null
@@ -423,11 +437,6 @@ class LocalApiServer(private val port: Int, context: Context) : NanoHTTPD("0.0.0
 
         if (selectedFunction != null && !containsTool(tools, selectedFunction)) {
             throw AutomationException("invalid_request", "La fonction '$selectedFunction' ne figure pas dans tools.")
-        }
-        val base = try {
-            ToolParser.buildToolCallPrompt(tools)
-        } catch (_: Exception) {
-            throw AutomationException("invalid_request", "La définition tools est invalide.")
         }
         return when {
             toolCallRequired -> "$base\nUn appel d’outil est obligatoire pour cette réponse."

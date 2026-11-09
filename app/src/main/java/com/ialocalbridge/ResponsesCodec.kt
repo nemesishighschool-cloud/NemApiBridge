@@ -85,7 +85,10 @@ object ResponsesCodec {
             }
         }
         val chat = JSONObject().put("model", body.optString("model")).put("messages", messages).put("stream", body.optBoolean("stream", false))
-        body.optJSONArray("tools")?.let { tools ->
+        val suppliedTools = body.opt("tools")
+        if (suppliedTools != null && suppliedTools != JSONObject.NULL && suppliedTools !is JSONArray)
+            throw AutomationException("invalid_request", "Le champ tools doit être un tableau.")
+        (suppliedTools as? JSONArray)?.let { tools ->
             val mapped = JSONArray()
             for (i in 0 until tools.length()) {
                 val tool = tools.optJSONObject(i) ?: throw AutomationException("invalid_request", "Définition d’outil invalide.")
@@ -94,6 +97,12 @@ object ResponsesCodec {
                     throw AutomationException("unsupported_parameter", "Les outils strict=true ne sont pas garantis sur le provider web.")
                 if (tool.optJSONObject("function") != null) mapped.put(tool)
                 else {
+                    if (tool.has("function") && !tool.isNull("function"))
+                        throw AutomationException("invalid_request", "La définition function doit être un objet.")
+                    if (tool.opt("name") !is String || tool.optString("name").isBlank())
+                        throw AutomationException("invalid_request", "Le nom de fonction est requis.")
+                    if (tool.has("parameters") && !tool.isNull("parameters") && tool.opt("parameters") !is JSONObject)
+                        throw AutomationException("invalid_request", "Le champ parameters doit être un objet JSON.")
                     val fn = JSONObject().put("name", tool.optString("name"))
                         .put("description", tool.optString("description"))
                         .put("parameters", tool.optJSONObject("parameters") ?: JSONObject().put("type", "object"))

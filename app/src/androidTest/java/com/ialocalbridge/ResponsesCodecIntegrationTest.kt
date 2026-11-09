@@ -30,6 +30,16 @@ class ResponsesCodecIntegrationTest {
         assertEquals("c1", result.getJSONArray("output").getJSONObject(1).getString("call_id"))
         assertEquals(5, result.getJSONObject("usage").getInt("total_tokens"))
     }
+    @Test fun rejectsMalformedToolsRatherThanDroppingThem() {
+        for (body in listOf(
+            """{"input":"hi","tools":"invalid"}""",
+            """{"input":"hi","tools":[{"type":"function","name":"f","parameters":[] }]}""",
+            """{"input":"hi","tools":[{"type":"function","function":"invalid"}]}"""
+        )) {
+            try { ResponsesCodec.toChat(JSONObject(body)); fail("tools were silently dropped: $body") }
+            catch (e: AutomationException) { assertEquals("invalid_request", e.errorCode) }
+        }
+    }
     @Test fun rejectsUnsupportedStateAndImageFileIdsInsteadOfLosingData() {
         try { ResponsesCodec.toChat(JSONObject("""{"input":"hi","previous_response_id":"resp_old"}""")); fail("previous_response_id silently ignored") }
         catch (e: AutomationException) { assertEquals("unsupported_parameter", e.errorCode) }
