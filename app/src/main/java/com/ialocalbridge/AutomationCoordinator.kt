@@ -151,6 +151,7 @@ class AutomationCoordinator(context: Context) {
             var lastObserved = ""
             var stablePolls = 0
             var sawGenerating = false
+            var diagnosticPolls = 0
 
             while (System.currentTimeMillis() - startedAt < config.timeouts.responseMs) {
                 if (cancelled.get()) {
@@ -187,6 +188,8 @@ class AutomationCoordinator(context: Context) {
                     }
                 } else false
                 val candidateIsNew = ResponseIdentityPolicy.isNew(answer, initialAnswer, initialScrollMissing, newByIdentity)
+                // Debug builds log only lengths and state flags, never prompt/answer text.
+                if ((appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 && ++diagnosticPolls % 20 == 0) android.util.Log.d("NemResponseDiag", "len=${answer.length} prev=${initialAnswer.length} noScroll=$initialScrollMissing generating=$isGenerating sawGeneration=$sawGenerating identity=$newByIdentity new=$candidateIsNew stable=$stablePolls")
                 if (candidateIsNew) {
                     if (answer == lastObserved) {
                         stablePolls++
